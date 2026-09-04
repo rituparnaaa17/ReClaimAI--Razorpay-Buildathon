@@ -58,22 +58,48 @@ export function formatTime(date: string | Date): string {
 
 export function getStatusColor(status: string): string {
   const map: Record<string, string> = {
+    // Legacy
     recovered: "badge-recovered",
     at_risk: "badge-at-risk",
     failed: "badge-failed",
     processing: "badge-processing",
     human_review: "badge-human-review",
+    // New State Machine States
+    detected: "badge-at-risk",
+    analyzing: "badge-processing",
+    predicting: "badge-processing",
+    deciding: "badge-processing",
+    action_required: "badge-human-review",
+    approved: "badge-processing",
+    recovering: "badge-processing",
+    verifying: "badge-processing",
+    escalated: "badge-human-review",
+    no_action: "badge-failed",
+    expired: "badge-failed",
   };
   return map[status] ?? "badge-processing";
 }
 
 export function getStatusLabel(status: string): string {
   const map: Record<string, string> = {
+    // Legacy
     recovered: "Recovered",
     at_risk: "At Risk",
     failed: "Failed",
     processing: "Processing",
     human_review: "Human Review",
+    // New State Machine States
+    detected: "Detected",
+    analyzing: "Analyzing",
+    predicting: "Predicting",
+    deciding: "Deciding",
+    action_required: "Action Required",
+    approved: "Approved",
+    recovering: "Recovering",
+    verifying: "Verifying",
+    escalated: "Escalated",
+    no_action: "No Action",
+    expired: "Expired",
   };
   return map[status] ?? status;
 }
