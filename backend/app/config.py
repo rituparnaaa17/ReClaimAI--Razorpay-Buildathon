@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Razorpay
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
 
     # Email
     resend_api_key: str = ""

@@ -92,6 +92,7 @@ async def fetch_payment(payment_id: str) -> Optional[Dict]:
         print(f"[Razorpay] fetch_payment failed: {e}")
         return None
 
+
 class ExecutionResult(TypedDict):
     status: str
     action_attempted: str
@@ -99,6 +100,7 @@ class ExecutionResult(TypedDict):
     error_code: Optional[str]
     error_description: Optional[str]
     timestamp: str
+
 
 async def execute_recovery(action: str, case: Dict[str, Any]) -> ExecutionResult:
     """
@@ -109,8 +111,8 @@ async def execute_recovery(action: str, case: Dict[str, Any]) -> ExecutionResult
         raise RuntimeError("Reclaim execution is restricted to Razorpay Test Mode only.")
 
     timestamp = datetime.now(timezone.utc).isoformat()
-    
-    if action in ["Alt. Payment Method", "Personalized Reminder", "Card Update Request"]:
+
+    if True: # Always generate a link for demo purposes to demonstrate end-to-end recovery
         try:
             result = await create_payment_link(case)
             return {
@@ -176,11 +178,15 @@ async def execute_recovery(action: str, case: Dict[str, Any]) -> ExecutionResult
             "timestamp": timestamp,
         }
 
+
 class VerificationResult(TypedDict):
     status: str
     razorpay_status: Optional[str]
+    payment_id: Optional[str]
+    razorpay_payment: Optional[Dict]
     error_description: Optional[str]
     timestamp: str
+
 
 async def verify_payment_status(case: Dict[str, Any]) -> VerificationResult:
     """
@@ -188,40 +194,83 @@ async def verify_payment_status(case: Dict[str, Any]) -> VerificationResult:
     Fetches the current Razorpay payment state to determine authoritative business outcome.
     """
     timestamp = datetime.now(timezone.utc).isoformat()
+    payment_link_id = case.get("razorpay_payment_link_id")
     payment_id = case.get("razorpay_payment_id")
-    
-    if not payment_id or not payment_id.startswith("pay_"):
-        return {
-            "status": "verification_failed",
-            "razorpay_status": None,
-            "error_description": "Missing or invalid Razorpay payment identifier",
-            "timestamp": timestamp
-        }
-        
+    client = get_razorpay_client()
+
     try:
-        client = get_razorpay_client()
+        # 1. If we generated a payment link, check the link status
+        if payment_link_id and payment_link_id.startswith("plink_"):
+            plink = client.payment_link.fetch(payment_link_id)
+            plink_status = plink.get("status")
+            
+            if plink_status == "paid":
+                return {
+                    "status": "recovered",
+                    "razorpay_status": "captured",
+                    "payment_id": payment_link_id,
+                    "razorpay_payment": dict(plink),
+                    "error_description": None,
+                    "timestamp": timestamp,
+                }
+            elif plink_status in ["cancelled", "expired"]:
+                return {
+                    "status": "not_recovered",
+                    "razorpay_status": "failed",
+                    "payment_id": payment_link_id,
+                    "razorpay_payment": None,
+                    "error_description": f"Payment link {plink_status}",
+                    "timestamp": timestamp,
+                }
+            else:
+                return {
+                    "status": "not_recovered",
+                    "razorpay_status": plink_status,
+                    "payment_id": payment_link_id,
+                    "razorpay_payment": None,
+                    "error_description": f"Payment link is in '{plink_status}' state",
+                    "timestamp": timestamp,
+                }
+
+        # 2. Otherwise, check the original payment ID (for smart retry, etc.)
+        if not payment_id or not payment_id.startswith("pay_"):
+            return {
+                "status": "verification_failed",
+                "razorpay_status": None,
+                "payment_id": None,
+                "razorpay_payment": None,
+                "error_description": "Missing or invalid Razorpay payment identifier",
+                "timestamp": timestamp,
+            }
+
         payment = client.payment.fetch(payment_id)
         razorpay_status = payment.get("status")
-        
+
         if razorpay_status == "captured":
             return {
                 "status": "recovered",
                 "razorpay_status": razorpay_status,
+                "payment_id": payment_id,
+                "razorpay_payment": dict(payment),
                 "error_description": None,
-                "timestamp": timestamp
+                "timestamp": timestamp,
             }
         else:
             return {
                 "status": "not_recovered",
                 "razorpay_status": razorpay_status,
+                "payment_id": payment_id,
+                "razorpay_payment": None,
                 "error_description": f"Payment is currently in '{razorpay_status}' state",
-                "timestamp": timestamp
+                "timestamp": timestamp,
             }
-            
+
     except Exception as e:
         return {
             "status": "verification_failed",
             "razorpay_status": None,
+            "payment_id": payment_id or payment_link_id,
+            "razorpay_payment": None,
             "error_description": str(e),
-            "timestamp": timestamp
+            "timestamp": timestamp,
         }

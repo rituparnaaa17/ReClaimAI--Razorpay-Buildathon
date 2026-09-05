@@ -11,6 +11,7 @@ from app.services.db_service import db_update_recovery_case, db_save_agent_log
 from app.services.razorpay_service import execute_recovery, verify_payment_status
 from app.services.gemini_client import generate_text
 from app.services.state_machine import RecoveryStateMachine
+from app.services.measurement import measure_recovered_amount
 
 settings = get_settings()
 
@@ -45,6 +46,7 @@ async def run_recovery_agent(case: Dict[str, Any]) -> Dict[str, Any]:
         "guardrail_reason": "",
         "final_status": "at_risk",
         "amount_recovered": None,
+        "verified_amount_rupees": None,
         "razorpay_result": None,
         "error": None,
     }
@@ -72,16 +74,19 @@ async def run_recovery_agent(case: Dict[str, Any]) -> Dict[str, Any]:
             break
 
     # Persist agent properties to Supabase
-    await db_update_recovery_case(case["id"], {
-        "amount_recovered": state["amount_recovered"],
+    update_payload: Dict[str, Any] = {
         "ai_reasoning": state["ai_reasoning"],
         "guardrail_passed": state["guardrail_passed"],
-    })
+    }
+    # Step 6: persist verified amount only when genuinely measured
+    if state.get("verified_amount_rupees") is not None:
+        update_payload["amount_recovered"] = float(state["verified_amount_rupees"])
+    await db_update_recovery_case(case["id"], update_payload)
 
     return {
         "case_id": case["id"],
         "final_status": state["final_status"],
-        "amount_recovered": state["amount_recovered"],
+        "amount_recovered": state.get("verified_amount_rupees"),
         "ai_reasoning": state["ai_reasoning"],
         "logs": state["logs"],
         "completed_at": datetime.now(timezone.utc).isoformat(),
@@ -105,7 +110,8 @@ async def _log_step(state: AgentState, step: str, decision: str, reason: str, co
 
 async def _node_detect(state: AgentState) -> AgentState:
     state["step"] = "DETECT"
-    await RecoveryStateMachine.transition_case(state["case"]["id"], "detected", reason="Agent started", source="agent")
+    if state["case"].get("status") != "detected":
+        await RecoveryStateMachine.transition_case(state["case"]["id"], "detected", reason="Agent started", source="agent")
     await _log_step(
         state, "DETECT",
         "Payment failure event detected and queued for recovery",
@@ -258,13 +264,21 @@ async def _node_execute(state: AgentState) -> AgentState:
         }
         result = state["razorpay_result"]
 
+    # ── Keep local state in sync but skip DB insert for link IDs ──
+    razorpay_id = result.get("razorpay_identifier")
+    if razorpay_id and result.get("status") == "executed":
+        # plink_xxx = payment link; pay_xxx = direct payment
+        field = "razorpay_payment_link_id" if razorpay_id.startswith("plink_") else "razorpay_payment_id"
+        state["case"][field] = razorpay_id
+
     await _log_step(
         state, "EXECUTE",
         f"Action executed: {action}" + (" via Razorpay test API" if settings.is_test_mode else " via Razorpay"),
-        f"Result status: {result['status']}, Razorpay ID: {result.get('razorpay_identifier', 'N/A')}",
+        f"Result: {result['status']} · Razorpay ID: {razorpay_id or 'N/A'} · Action: {action}",
         0.94, "success" if result["status"] == "executed" else "pending"
     )
     return state
+
 
 
 async def _node_verify(state: AgentState) -> AgentState:
@@ -286,6 +300,21 @@ async def _node_verify(state: AgentState) -> AgentState:
             decision = "Payment captured successfully"
             log_result = "success"
             await RecoveryStateMachine.transition_case(state["case"]["id"], "recovered", reason="Razorpay confirmed payment captured", source="agent")
+
+            # ── Step 6: Measure actual captured amount ─────────────────────────
+            measurement = measure_recovered_amount(
+                verification_result=verify_result,
+                razorpay_payment=verify_result.get("razorpay_payment"),
+            )
+            if measurement["status"] == "measured" and measurement["amount_rupees"] is not None:
+                state["verified_amount_rupees"] = measurement["amount_rupees"]
+                print(
+                    f"[Step6] Measured ₹{measurement['amount_rupees']} "
+                    f"(paise={measurement['amount_paise']}) "
+                    f"from {measurement['payment_id']}"
+                )
+            else:
+                print(f"[Step6] Warning: recovered but measurement unavailable: {measurement['status']}")
         
         elif verify_result["status"] == "not_recovered" and verify_result["razorpay_status"] == "failed":
             state["final_status"] = "failed"

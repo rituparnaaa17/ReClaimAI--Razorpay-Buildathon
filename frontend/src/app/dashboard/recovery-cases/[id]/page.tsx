@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle, Clock, Loader2, Brain,
   ShieldCheck, Play, AlertTriangle, XCircle, Zap, RefreshCw,
+  UserCheck, ExternalLink, AlertOctagon,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { getStatusColor, getStatusLabel, getFailureLabel, sleep } from "@/lib/utils";
@@ -20,34 +21,13 @@ type CaseData = {
   payment_method: string; root_cause: string;
   recommended_action: string; ai_reasoning: string;
   status: string; retry_count: number; guardrail_passed: boolean;
+  guardrail_reason?: string;
+  razorpay_payment_link_id?: string;
+  razorpay_payment_id?: string;
+  human_review_note?: string;
   created_at: string; updated_at: string;
   agent_logs: AgentLog[];
 };
-
-function buildMockCase(id: string): CaseData {
-  const prob = parseFloat((Math.random() * 0.6 + 0.3).toFixed(2));
-  const amount = Math.round(Math.random() * 48000 + 999);
-  const failures = ["UPI_TIMEOUT","BANK_DECLINE","ABANDONED","EXPIRED_CARD","TECHNICAL_FAILURE"];
-  const failure = failures[parseInt(id.slice(-1), 16) % 5];
-  const now = Date.now();
-  return {
-    id, customer_name: ["Arjun Sharma","Priya Patel","Rahul Gupta","Vikram Singh"][parseInt(id.slice(-1), 16) % 4],
-    customer_email: "customer@example.com", amount_at_risk: amount, amount_recovered: null,
-    recovery_probability: prob, failure_reason: failure, payment_method: ["UPI","CARD","NETBANKING","WALLET"][parseInt(id.slice(-1), 16) % 4],
-    root_cause: "Temporary network issue caused payment failure.", recommended_action: "Smart Retry",
-    ai_reasoning: `Based on the ${failure.replace(/_/g," ").toLowerCase()} failure pattern, a ${Math.round(prob*100)}% recovery probability suggests this case can be resolved with an automated retry. The customer has a clean payment history.`,
-    status: "at_risk", retry_count: 0, guardrail_passed: true,
-    created_at: new Date(now - 1800000).toISOString(),
-    updated_at: new Date(now - 300000).toISOString(),
-    agent_logs: [
-      { step:"DETECT", decision:"Payment failure detected", reason:"Webhook from Razorpay", confidence:0.99, timestamp:new Date(now-1800000).toISOString(), result:"success" },
-      { step:"DIAGNOSE", decision:`Root cause: ${failure}`, reason:"Gateway error analyzed", confidence:0.93, timestamp:new Date(now-1740000).toISOString(), result:"success" },
-      { step:"PREDICT", decision:`Recovery probability: ${Math.round(prob*100)}%`, reason:"ML model prediction", confidence:prob, timestamp:new Date(now-1700000).toISOString(), result:"success" },
-      { step:"DECIDE", decision:"Smart Retry selected", reason:"High probability + temporary failure", confidence:0.91, timestamp:new Date(now-1680000).toISOString(), result:"success" },
-      { step:"GUARDRAIL", decision:"Policy validation passed", reason:"All checks passed", confidence:0.99, timestamp:new Date(now-1660000).toISOString(), result:"success" },
-    ],
-  };
-}
 
 type ExecState = "idle" | "analyzing" | "running" | "done" | "error";
 
@@ -56,6 +36,9 @@ const STEP_ICONS: Record<string, React.ElementType> = {
   DECIDE: Play, GUARDRAIL: ShieldCheck, EXECUTE: Zap, VERIFY: CheckCircle,
 };
 
+const HUMAN_STATES = new Set(["action_required", "escalated", "human_review"]);
+const TERMINAL_STATES = new Set(["recovered", "failed", "no_action", "expired"]);
+
 export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
@@ -63,19 +46,26 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
   const [execState, setExecState] = useState<ExecState>("idle");
   const [runningStep, setRunningStep] = useState(-1);
   const [resultMsg, setResultMsg] = useState("");
+  const [notFound, setNotFound] = useState(false);
+
+  // Human review state
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewResult, setReviewResult] = useState("");
 
   const loadCase = useCallback(async () => {
     try {
       const data = await api.getRecoveryCase(id) as Record<string, unknown>;
       if (data?.id) setCaseData(data as unknown as CaseData);
-      else setCaseData(buildMockCase(id));
+      else setNotFound(true);
     } catch {
-      setCaseData(buildMockCase(id));
+      setNotFound(true);
     }
   }, [id]);
 
   useEffect(() => { loadCase(); }, [loadCase]);
 
+  // ── Agent run ────────────────────────────────────────────────────────────────
   const handleRunAgent = async () => {
     if (!caseData || execState === "running" || execState === "analyzing") return;
     setExecState("analyzing");
@@ -83,55 +73,84 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
     setResultMsg("");
 
     try {
-      // First show analyzing state, then kick off agent
       await sleep(600);
       setExecState("running");
-
-      // Animate through existing steps first
-      const logs = caseData.agent_logs;
-      for (let i = 0; i < logs.length; i++) {
+      for (let i = 0; i < caseData.agent_logs.length; i++) {
         setRunningStep(i);
-        await sleep(750);
+        await sleep(700);
       }
-
-      // Call the real LangGraph agent
       const result = await api.runAgent(id) as Record<string, unknown>;
-
-      // Reload case with real agent logs
       await loadCase();
-
-      const recovered = result?.final_status === "recovered";
-      setResultMsg(recovered
-        ? `₹${Number(caseData.amount_at_risk).toLocaleString()} recovered successfully`
-        : result?.final_status === "human_review"
-        ? "Escalated for human review"
-        : "Recovery attempted — monitoring for result"
+      const finalStatus = result?.final_status as string;
+      const amtRecovered = result?.amount_recovered as number | null;
+      setResultMsg(
+        finalStatus === "recovered"
+          ? `₹${amtRecovered ? amtRecovered.toLocaleString() : Number(caseData.amount_at_risk).toLocaleString()} recovered successfully`
+          : finalStatus === "escalated" || finalStatus === "action_required"
+          ? "Escalated — awaiting human review"
+          : finalStatus === "no_action"
+          ? "No action — probability below threshold"
+          : finalStatus === "verifying"
+          ? "Recovery attempted — awaiting Razorpay confirmation"
+          : "Recovery attempted — monitoring result"
       );
       setExecState("done");
-    } catch {
+    } catch (err: unknown) {
       setExecState("error");
-      setResultMsg("Agent encountered an error — using fallback recovery");
+      setResultMsg(`Agent error: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
+
+  // ── Human review ────────────────────────────────────────────────────────────
+  const handleHumanReview = async (decision: "approve" | "reject" | "escalate") => {
+    if (!caseData || reviewing) return;
+    setReviewing(true);
+    setReviewResult("");
+    try {
+      const res = await api.humanReview(id, decision, reviewNote || undefined) as Record<string, unknown>;
+      await loadCase();
+      setReviewResult(
+        decision === "approve"
+          ? "✓ Approved — agent executed recovery action"
+          : decision === "reject"
+          ? "✗ Rejected — case closed with no action"
+          : "↑ Escalated for senior review"
+      );
+    } catch (err: unknown) {
+      setReviewResult(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  if (notFound) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "400px", gap: "12px" }}>
+      <XCircle size={40} color="var(--error)" />
+      <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>Case not found</span>
+      <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Case ID &ldquo;{id}&rdquo; does not exist in the database.</span>
+      <button className="btn btn-ghost btn-sm" onClick={() => router.back()} style={{ marginTop: "8px" }}>← Go back</button>
+    </div>
+  );
 
   if (!caseData) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "400px", gap: "12px" }}>
       <Loader2 size={24} color="var(--accent-green)" style={{ animation: "spin 1s linear infinite" }} />
-      <span style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Loading case data...</span>
+      <span style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Loading case data…</span>
       <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
-  const prob = caseData.recovery_probability;
+  const prob = caseData.recovery_probability ?? 0;
   const probColor = prob > 0.7 ? "var(--accent-green)" : prob > 0.5 ? "var(--warning)" : "var(--error)";
-  const terminalStates = ["recovered", "failed", "escalated", "no_action", "expired"];
-  const canExecute = !terminalStates.includes(caseData.status) && execState === "idle";
+  const isHumanReview = HUMAN_STATES.has(caseData.status);
+  const isTerminal = TERMINAL_STATES.has(caseData.status) || caseData.status === "escalated";
+  const canExecute = !isTerminal && !isHumanReview && execState === "idle";
+  const hasPaymentLink = !!caseData.razorpay_payment_link_id;
 
   return (
     <div>
       <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
 
-      {/* Back button */}
       <button onClick={() => router.back()} className="btn btn-ghost btn-sm" style={{ marginBottom: "20px", gap: "6px", paddingLeft: 0 }}>
         <ArrowLeft size={15} /> Back to Recovery Cases
       </button>
@@ -148,6 +167,11 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
                   Retry {caseData.retry_count}/2
                 </span>
               )}
+              {isHumanReview && (
+                <span style={{ fontSize: "0.72rem", color: "#805AD5", background: "rgba(196,181,253,0.15)", border: "1px solid rgba(196,181,253,0.3)", padding: "2px 8px", borderRadius: "6px", fontWeight: 600 }}>
+                  ⚠ Awaiting Human Review
+                </span>
+              )}
             </div>
             <div style={{ fontSize: "2.5rem", fontWeight: 900, letterSpacing: "-0.04em", lineHeight: 1 }}>
               ₹{Number(caseData.amount_at_risk).toLocaleString()}
@@ -156,26 +180,38 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
               {getFailureLabel(caseData.failure_reason)} · {caseData.payment_method} · {caseData.customer_name}
             </div>
             <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "4px" }}>{caseData.customer_email}</div>
+
+            {/* Agent-created payment link indicator */}
+            {hasPaymentLink && (
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: "6px", marginTop: "12px",
+                background: "var(--accent-green-dim)", border: "1px solid var(--border-green)",
+                borderRadius: "8px", padding: "5px 12px",
+              }}>
+                <div className="ai-dot" style={{ width: 6, height: 6 }} />
+                <span style={{ fontSize: "0.75rem", color: "var(--accent-green)", fontWeight: 600 }}>
+                  Agent created payment link: {caseData.razorpay_payment_link_id}
+                </span>
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "flex-end" }}>
-            {/* Refresh */}
             <button className="btn btn-ghost btn-sm" onClick={loadCase} style={{ gap: "5px", fontSize: "0.75rem" }}>
               <RefreshCw size={12} /> Refresh
             </button>
 
-            {/* Execute / status display */}
             {caseData.status === "recovered" ? (
               <div style={{ background: "var(--accent-green-dim)", border: "1px solid var(--border-green)", borderRadius: "12px", padding: "12px 20px", textAlign: "center" }}>
                 <div style={{ fontSize: "0.72rem", color: "var(--accent-green-soft)", marginBottom: "2px" }}>Recovered</div>
-                <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--accent-green)" }}>₹{Number(caseData.amount_at_risk).toLocaleString()}</div>
-              </div>
-            ) : ["action_required", "escalated", "human_review"].includes(caseData.status) ? (
-              <div style={{ background: "rgba(196,181,253,0.1)", border: "1px solid rgba(196,181,253,0.2)", borderRadius: "12px", padding: "12px 20px", textAlign: "center" }}>
-                <div style={{ fontSize: "0.72rem", color: "#805AD5", marginBottom: "2px" }}>
-                  {caseData.status === "escalated" ? "Escalated" : "Action Required"}
+                <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--accent-green)" }}>
+                  ₹{caseData.amount_recovered ? Number(caseData.amount_recovered).toLocaleString() : Number(caseData.amount_at_risk).toLocaleString()}
                 </div>
-                <div style={{ fontSize: "0.8rem", color: "#805AD5" }}>Awaiting human review</div>
+              </div>
+            ) : isHumanReview ? (
+              <div style={{ background: "rgba(196,181,253,0.08)", border: "1px solid rgba(196,181,253,0.25)", borderRadius: "12px", padding: "10px 16px", textAlign: "center" }}>
+                <div style={{ fontSize: "0.72rem", color: "#805AD5", marginBottom: "2px" }}>Human Review Required</div>
+                <div style={{ fontSize: "0.78rem", color: "#805AD5" }}>See review panel below</div>
               </div>
             ) : (
               <button
@@ -185,8 +221,8 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
                 disabled={!canExecute}
                 style={{ gap: "8px" }}
               >
-                {execState === "analyzing" ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Analyzing...</> :
-                 execState === "running"   ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Agent Running...</> :
+                {execState === "analyzing" ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Analyzing…</> :
+                 execState === "running"   ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Agent Running…</> :
                  execState === "done"      ? <><CheckCircle size={15} /> Complete</> :
                  execState === "error"     ? <><XCircle size={15} /> Error — Retry</> :
                  <><Play size={15} /> Run AI Recovery Agent</>}
@@ -196,11 +232,95 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
+      {/* ── Human Review Panel (only when action_required / escalated) ── */}
+      {isHumanReview && (
+        <div style={{
+          background: "rgba(196,181,253,0.06)",
+          border: "1px solid rgba(196,181,253,0.3)",
+          borderRadius: "16px",
+          padding: "28px",
+          marginBottom: "20px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
+            <AlertOctagon size={20} color="#805AD5" />
+            <div>
+              <h3 style={{ fontSize: "1rem", color: "#805AD5", marginBottom: "2px" }}>Human Review Required</h3>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                {caseData.status === "escalated"
+                  ? "This case was escalated by the AI agent (retry limit or guardrail rule). Review and decide."
+                  : `This case exceeds the ₹50,000 auto-recovery limit (₹${Number(caseData.amount_at_risk).toLocaleString()}). Manual approval required.`}
+              </p>
+            </div>
+          </div>
+
+          {caseData.guardrail_reason && (
+            <div style={{ background: "var(--bg-secondary)", borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+              <strong>Agent reason:</strong> {caseData.guardrail_reason}
+            </div>
+          )}
+
+          <div style={{ marginBottom: "16px" }}>
+            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "6px" }}>
+              Reviewer note (optional)
+            </label>
+            <textarea
+              className="input"
+              rows={2}
+              placeholder="Add a review note, e.g. 'Verified with customer — safe to proceed'"
+              value={reviewNote}
+              onChange={(e) => setReviewNote(e.target.value)}
+              style={{ resize: "vertical", width: "100%" }}
+            />
+          </div>
+
+          {reviewResult && (
+            <div style={{
+              padding: "10px 14px", marginBottom: "14px", borderRadius: "8px", fontSize: "0.85rem", fontWeight: 600,
+              background: reviewResult.startsWith("✓") ? "var(--accent-green-dim)" : reviewResult.startsWith("✗") ? "rgba(255,98,98,0.1)" : "rgba(196,181,253,0.1)",
+              color: reviewResult.startsWith("✓") ? "var(--accent-green)" : reviewResult.startsWith("✗") ? "var(--error)" : "#805AD5",
+              border: `1px solid ${reviewResult.startsWith("✓") ? "var(--border-green)" : reviewResult.startsWith("✗") ? "rgba(255,98,98,0.2)" : "rgba(196,181,253,0.3)"}`,
+            }}>
+              {reviewResult}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: "10px" }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => handleHumanReview("approve")}
+              disabled={reviewing}
+              style={{ gap: "6px", flex: 1 }}
+            >
+              <UserCheck size={15} />
+              {reviewing ? "Processing…" : "✓ Approve & Execute"}
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => handleHumanReview("escalate")}
+              disabled={reviewing}
+              style={{ gap: "6px" }}
+            >
+              ↑ Re-escalate
+            </button>
+            <button
+              onClick={() => handleHumanReview("reject")}
+              disabled={reviewing}
+              style={{
+                padding: "8px 16px", borderRadius: "8px", cursor: "pointer",
+                background: "rgba(255,98,98,0.1)", border: "1px solid rgba(255,98,98,0.2)",
+                color: "var(--error)", fontSize: "0.85rem", fontWeight: 600,
+              }}
+            >
+              ✗ Reject
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main 2-col layout */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
         {/* Left: AI Decision + Reasoning */}
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          {/* Probability ring + fields */}
           <div className="card" style={{ padding: "24px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "20px" }}>
               <Brain size={16} color="var(--accent-green)" />
@@ -224,14 +344,38 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
             </div>
 
             {[
-              { label: "Root Cause", value: caseData.root_cause },
-              { label: "Recommended Action", value: caseData.recommended_action, highlight: true },
-              { label: "Payment Method", value: caseData.payment_method },
-              { label: "Guardrail", value: caseData.guardrail_passed ? "✓ Auto-recovery approved" : "⚠ Human review required", color: caseData.guardrail_passed ? "var(--accent-green)" : "var(--warning)" },
-            ].map(({ label, value, highlight, color }) => (
-              <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "10px 12px", background: "var(--bg-secondary)", borderRadius: "8px", marginBottom: "8px", gap: "12px" }}>
+              { label: "Root Cause", value: caseData.root_cause || "Pending diagnosis" },
+              { label: "Recommended Action", value: caseData.recommended_action || "—", highlight: true },
+              { label: "Payment Method", value: caseData.payment_method || "—" },
+              {
+                label: "Guardrail",
+                value: caseData.guardrail_passed ? "✓ Auto-recovery approved" : "⚠ Human review required",
+                color: caseData.guardrail_passed ? "var(--accent-green)" : "var(--warning)",
+              },
+              ...(hasPaymentLink ? [{
+                label: "Payment Link",
+                value: caseData.razorpay_payment_link_id!,
+                isLink: true,
+              }] : []),
+            ].map(({ label, value, highlight, color, isLink }: { label: string; value: string; highlight?: boolean; color?: string; isLink?: boolean }) => (
+              <div key={label} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+                padding: "10px 12px", background: "var(--bg-secondary)", borderRadius: "8px", marginBottom: "8px", gap: "12px",
+              }}>
                 <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", flexShrink: 0 }}>{label}</span>
-                <span style={{ fontSize: "0.8rem", fontWeight: highlight ? 700 : 500, color: color || (highlight ? "#3366FF" : "var(--text-primary)"), textAlign: "right" }}>{value}</span>
+                {isLink ? (
+                  <a
+                    href={`https://dashboard.razorpay.com/app/payment-links/${value}`}
+                    target="_blank" rel="noreferrer"
+                    style={{ fontSize: "0.75rem", fontFamily: "monospace", color: "var(--accent-green)", display: "flex", alignItems: "center", gap: "4px" }}
+                  >
+                    {value.slice(0, 24)}… <ExternalLink size={11} />
+                  </a>
+                ) : (
+                  <span style={{ fontSize: "0.8rem", fontWeight: highlight ? 700 : 500, color: color || (highlight ? "#3366FF" : "var(--text-primary)"), textAlign: "right" }}>
+                    {value}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -280,7 +424,13 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
           </div>
 
           <div style={{ display: "flex", flexDirection: "column" }}>
-            {caseData.agent_logs.map((log, i) => {
+            {caseData.agent_logs.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                {isHumanReview
+                  ? "Agent stopped at GUARDRAIL — awaiting human decision above."
+                  : "No agent steps yet. Run the AI Recovery Agent to begin."}
+              </div>
+            ) : caseData.agent_logs.map((log, i) => {
               const Icon = STEP_ICONS[log.step] || CheckCircle;
               const isActive = execState === "running" && runningStep === i;
               const isPast = execState === "done" || (execState === "idle" && log.result === "success");
@@ -314,7 +464,7 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
                         {new Date(log.timestamp).toLocaleTimeString("en-IN")}
                       </span>
                       <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginLeft: "auto" }}>
-                        {Math.round(log.confidence * 100)}%
+                        {Math.round((log.confidence ?? 0) * 100)}%
                       </span>
                     </div>
                     <div style={{ fontSize: "0.82rem", color: "var(--text-primary)", fontWeight: 500, marginBottom: "2px" }}>{log.decision}</div>
@@ -327,19 +477,18 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
             {/* Result banner */}
             {execState === "done" && (
               <div style={{
-                background: caseData.status === "recovered" || resultMsg.includes("recovered")
-                  ? "var(--accent-green-dim)" : "rgba(147,197,253,0.1)",
-                border: `1px solid ${caseData.status === "recovered" || resultMsg.includes("recovered") ? "var(--border-green)" : "rgba(147,197,253,0.2)"}`,
+                background: resultMsg.includes("recovered") ? "var(--accent-green-dim)" : "rgba(147,197,253,0.1)",
+                border: `1px solid ${resultMsg.includes("recovered") ? "var(--border-green)" : "rgba(147,197,253,0.2)"}`,
                 borderRadius: "12px", padding: "16px", textAlign: "center", marginTop: "8px",
               }}>
-                <CheckCircle size={22} color={caseData.status === "recovered" || resultMsg.includes("recovered") ? "var(--accent-green)" : "#3366FF"} style={{ marginBottom: "6px" }} />
-                <div style={{ fontSize: "1rem", fontWeight: 700, color: caseData.status === "recovered" || resultMsg.includes("recovered") ? "var(--accent-green)" : "#3366FF" }}>
+                <CheckCircle size={22} color={resultMsg.includes("recovered") ? "var(--accent-green)" : "#3366FF"} style={{ marginBottom: "6px" }} />
+                <div style={{ fontSize: "1rem", fontWeight: 700, color: resultMsg.includes("recovered") ? "var(--accent-green)" : "#3366FF" }}>
                   {resultMsg}
                 </div>
               </div>
             )}
             {execState === "error" && (
-              <div style={{ background: "var(--error-dim)", border: "1px solid rgba(255,98,98,0.2)", borderRadius: "12px", padding: "16px", textAlign: "center", marginTop: "8px" }}>
+              <div style={{ background: "var(--error-dim, rgba(255,98,98,0.1))", border: "1px solid rgba(255,98,98,0.2)", borderRadius: "12px", padding: "16px", textAlign: "center", marginTop: "8px" }}>
                 <XCircle size={22} color="var(--error)" style={{ marginBottom: "6px" }} />
                 <div style={{ fontSize: "0.875rem", color: "var(--error)" }}>{resultMsg}</div>
               </div>

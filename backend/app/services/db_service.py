@@ -7,13 +7,6 @@ from datetime import datetime, timezone
 import uuid
 
 from app.services.supabase_client import get_supabase
-from app.services.mock_data import (
-    get_mock_recovery_cases,
-    get_mock_recovery_case,
-    get_mock_transactions,
-    get_mock_analytics,
-    get_mock_agent_logs,
-)
 
 
 # ── Recovery Cases ────────────────────────────────────────────────────────────
@@ -29,24 +22,20 @@ async def db_get_recovery_cases(status: Optional[str] = None, merchant_id: Optio
             q = q.eq("merchant_id", merchant_id)
 
         result = q.limit(100).execute()
-        if result.data:
-            return result.data
+        return result.data if result.data is not None else []
     except Exception as e:
         print(f"[DB] get_recovery_cases failed: {e}")
-
-    return get_mock_recovery_cases()
+        return []
 
 
 async def db_get_recovery_case(case_id: str) -> Optional[Dict]:
     try:
         sb = get_supabase()
         result = sb.table("recovery_cases").select("*").eq("id", case_id).single().execute()
-        if result.data:
-            return result.data
+        return result.data
     except Exception as e:
         print(f"[DB] get_recovery_case failed: {e}")
-
-    return get_mock_recovery_case(case_id)
+        return None
 
 
 async def db_update_recovery_case(case_id: str, updates: Dict) -> bool:
@@ -103,12 +92,10 @@ async def db_get_agent_logs(case_id: str) -> List[Dict]:
     try:
         sb = get_supabase()
         result = sb.table("agent_logs").select("*").eq("recovery_case_id", case_id).order("timestamp").execute()
-        if result.data:
-            return result.data
+        return result.data if result.data is not None else []
     except Exception as e:
         print(f"[DB] get_agent_logs failed: {e}")
-
-    return get_mock_agent_logs(case_id)
+        return []
 
 
 # ── Transactions ───────────────────────────────────────────────────────────────
@@ -119,13 +106,11 @@ async def db_get_transactions(status: Optional[str] = None, limit: int = 50) -> 
         q = sb.table("transactions").select("*").order("created_at", desc=True)
         if status:
             q = q.eq("status", status)
-        result = q.limit(limit).execute()
-        if result.data:
-            return result.data
+        result = q.limit(100).execute()
+        return result.data if result.data is not None else []
     except Exception as e:
         print(f"[DB] get_transactions failed: {e}")
-
-    return get_mock_transactions()
+        return []
 
 
 # ── Analytics ──────────────────────────────────────────────────────────────────
@@ -134,8 +119,16 @@ async def db_get_analytics_overview() -> Dict:
     try:
         sb = get_supabase()
 
+        # All legacy + state machine at-risk states
+        AT_RISK_STATES = [
+            "at_risk", "processing", "human_review",
+            "detected", "analyzing", "predicting", "deciding",
+            "action_required", "approved", "recovering", "verifying",
+        ]
+
         # Total revenue at risk
-        risk = sb.table("recovery_cases").select("amount_at_risk").in_("status", ["at_risk", "processing", "human_review"]).execute()
+        risk = sb.table("recovery_cases").select("amount_at_risk").in_("status", AT_RISK_STATES).execute()
+        # Only sum amount_recovered from genuinely recovered cases (Step 6: authoritative)
         recovered = sb.table("recovery_cases").select("amount_recovered").eq("status", "recovered").execute()
         all_cases = sb.table("recovery_cases").select("status").execute()
         txn_data = sb.table("transactions").select("status").execute()
@@ -144,6 +137,7 @@ async def db_get_analytics_overview() -> Dict:
             total = len(all_cases.data)
             recovered_count = len([c for c in all_cases.data if c["status"] == "recovered"])
             at_risk_amount = sum(r.get("amount_at_risk") or 0 for r in risk.data or [])
+            # Step 6: revenue_recovered is sum of verified Razorpay captured amounts only
             recovered_amount = sum(r.get("amount_recovered") or 0 for r in recovered.data or [])
             failed = len([t for t in (txn_data.data or []) if t["status"] == "failed"])
             abandoned = len([t for t in (txn_data.data or []) if t["status"] == "abandoned"])

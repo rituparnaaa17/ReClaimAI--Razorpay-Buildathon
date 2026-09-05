@@ -1,168 +1,236 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Search, Filter, ArrowRight, RefreshCw } from "lucide-react";
+import { Search, ArrowRight, RefreshCw, FolderOpen } from "lucide-react";
 import { api } from "@/lib/api";
 import { getStatusColor, getStatusLabel, getFailureLabel } from "@/lib/utils";
 
-const FILTERS = [
-  "all", "detected", "analyzing", "predicting", "deciding", 
-  "action_required", "approved", "recovering", "verifying", 
-  "recovered", "failed", "escalated", "no_action", "expired"
+interface RecoveryCase {
+  id: string;
+  customer_name: string;
+  customer_email: string;
+  amount_at_risk: number;
+  failure_reason: string;
+  recovery_probability: number;
+  recommended_action: string;
+  status: string;
+  payment_method: string;
+  created_at: string;
+}
+
+const STATUS_FILTERS = [
+  "all", "detected", "analyzing", "predicting", "deciding",
+  "action_required", "approved", "recovering", "verifying",
+  "recovered", "failed", "escalated", "no_action", "expired",
 ];
 
-const MOCK_CASES = Array.from({ length: 25 }, (_, i) => ({
-  id: `RC_${10001 + i}`,
-  customer_name: ["Arjun Sharma","Priya Patel","Rahul Gupta","Sneha Mehta","Vikram Singh","Ananya Reddy","Karthik Iyer","Divya Nair"][i % 8],
-  customer_email: `customer${i}@example.com`,
-  amount_at_risk: Math.round(Math.random() * 48000 + 999),
-  failure_reason: ["UPI_TIMEOUT","BANK_DECLINE","INSUFFICIENT_BALANCE","EXPIRED_CARD","TECHNICAL_FAILURE","ABANDONED","SUBSCRIPTION_FAILURE"][i % 7],
-  recovery_probability: parseFloat((Math.random() * 0.7 + 0.2).toFixed(2)),
-  recommended_action: ["Smart Retry","Personalized Reminder","Alt. Payment Method","Card Update Request","Smart Retry + Notify"][i % 5],
-  status: ["recovered","detected","analyzing","action_required","failed","recovering","verifying","no_action"][i % 8],
-  payment_method: ["UPI","CARD","NETBANKING","WALLET"][i % 4],
-  created_at: new Date(Date.now() - i * 3600000 * (1 + Math.random() * 5)).toISOString(),
-}));
-
 export default function RecoveryCasesPage() {
-  const [cases, setCases] = useState(MOCK_CASES);
+  const [cases, setCases] = useState<RecoveryCase[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    setLoading(true);
-    api.getRecoveryCases(filter)
-      .then((data) => { if (Array.isArray(data) && data.length) setCases(data as typeof MOCK_CASES); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [filter]);
+  const load = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setRefreshing(true);
+    try {
+      const data = await api.getRecoveryCases("all") as RecoveryCase[];
+      if (Array.isArray(data)) setCases(data);
+    } catch {
+      // keep current data
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleReset = () => {
+    setFilter("all");
+    setSearch("");
+    load(true);
+  };
 
   const filtered = cases.filter((c) => {
-    const matchFilter = filter === "all" || c.status === filter;
-    const matchSearch = !search ||
-      c.id.toLowerCase().includes(search.toLowerCase()) ||
-      c.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-      getFailureLabel(c.failure_reason).toLowerCase().includes(search.toLowerCase());
-    return matchFilter && matchSearch;
+    const statusMatch = filter === "all" || c.status === filter;
+    if (!statusMatch) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      (c.id ?? "").toLowerCase().includes(q) ||
+      (c.customer_name ?? "").toLowerCase().includes(q) ||
+      getFailureLabel(c.failure_reason).toLowerCase().includes(q)
+    );
   });
 
-  const counts = FILTERS.reduce((acc, f) => {
+  const counts = STATUS_FILTERS.reduce<Record<string, number>>((acc, f) => {
     acc[f] = f === "all" ? cases.length : cases.filter((c) => c.status === f).length;
     return acc;
-  }, {} as Record<string, number>);
+  }, {});
+
+  const recovered = cases.filter((c) => c.status === "recovered").length;
+  const actionRequired = cases.filter((c) => ["action_required", "escalated"].includes(c.status)).length;
 
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: "24px" }}>
-        <h2 style={{ fontSize: "1.5rem", marginBottom: "4px" }}>Recovery Cases</h2>
-        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-          {cases.length} cases · {cases.filter((c) => c.status === "recovered").length} recovered
-        </p>
+      <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+        <div>
+          <h2 style={{ fontSize: "1.5rem", marginBottom: "4px" }}>Recovery Cases</h2>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+            {loading ? "Loading…" : `${cases.length} total · ${recovered} recovered`}
+            {actionRequired > 0 && (
+              <span style={{ color: "var(--warning)", marginLeft: "8px", fontWeight: 600 }}>
+                · {actionRequired} awaiting human review
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => load(true)}
+          disabled={refreshing}
+          style={{ gap: "6px" }}
+        >
+          <RefreshCw size={14} className={refreshing ? "spin" : ""} />
+          Refresh
+        </button>
       </div>
 
-      {/* Filter + Search bar */}
+      {/* Filter + Search */}
       <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
-        {/* Filters */}
-        <div style={{ display: "flex", gap: "6px", background: "var(--bg-card)", padding: "4px", borderRadius: "10px", border: "1px solid var(--border-subtle)" }}>
-          {FILTERS.map((f) => (
-            <button
-              key={f}
-              className={`filter-tab ${filter === f ? "active" : ""}`}
-              onClick={() => setFilter(f)}
-              id={`filter-${f}`}
-            >
-              {getStatusLabel(f) || "All"} <span style={{ opacity: 0.6 }}>({counts[f]})</span>
-            </button>
-          ))}
+        <div style={{
+          display: "flex", alignItems: "center",
+          background: "var(--bg-card)", border: "1px solid var(--border-subtle)",
+          borderRadius: "10px", padding: "0 14px",
+        }}>
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{
+              background: "var(--bg-primary)", border: "none", color: "var(--text-primary)",
+              padding: "10px 0", fontSize: "0.85rem", outline: "none", cursor: "pointer"
+            }}
+          >
+            {STATUS_FILTERS.map((f) => (
+              <option key={f} value={f} style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
+                {getStatusLabel(f) || "All"} ({counts[f]})
+              </option>
+            ))}
+          </select>
         </div>
 
-        {/* Search */}
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1, maxWidth: "320px", background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: "10px", padding: "0 14px" }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: "8px",
+          flex: 1, maxWidth: "320px",
+          background: "var(--bg-card)", border: "1px solid var(--border-subtle)",
+          borderRadius: "10px", padding: "0 14px",
+        }}>
           <Search size={15} color="var(--text-muted)" />
           <input
             className="input"
             style={{ background: "transparent", border: "none", padding: "10px 0", boxShadow: "none" }}
-            placeholder="Search cases, customers..."
+            placeholder="Search cases, customers…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
-        <button className="btn btn-secondary btn-sm" onClick={() => { setFilter("all"); setSearch(""); }} style={{ gap: "6px" }}>
+        <button className="btn btn-secondary btn-sm" onClick={handleReset} style={{ gap: "6px" }}>
           <RefreshCw size={14} /> Reset
         </button>
       </div>
 
       {/* Table */}
-      <div className="table-container">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Case ID</th>
-              <th>Customer</th>
-              <th>Amount at Risk</th>
-              <th>Problem</th>
-              <th>Method</th>
-              <th>Recovery Prob.</th>
-              <th>Recommended Action</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((c) => (
-              <tr key={c.id}>
-                <td>
-                  <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: "var(--accent-green-soft)" }}>
-                    {c.id}
-                  </span>
-                </td>
-                <td>
-                  <div style={{ fontWeight: 500, color: "var(--text-primary)", fontSize: "0.875rem" }}>{c.customer_name}</div>
-                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{c.customer_email}</div>
-                </td>
-                <td>
-                  <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)" }}>
-                    ₹{c.amount_at_risk.toLocaleString()}
-                  </span>
-                </td>
-                <td style={{ fontSize: "0.825rem" }}>{getFailureLabel(c.failure_reason)}</td>
-                <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{c.payment_method}</td>
-                <td>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <div className="progress-bar" style={{ width: "60px" }}>
-                      <div className="progress-fill" style={{
-                        width: `${Math.round(c.recovery_probability * 100)}%`,
-                        background: c.recovery_probability > 0.7 ? "var(--accent-green)" : c.recovery_probability > 0.5 ? "var(--warning)" : "var(--error)",
-                      }} />
-                    </div>
-                    <span style={{
-                      fontSize: "0.8rem", fontWeight: 700,
-                      color: c.recovery_probability > 0.7 ? "var(--accent-green)" : c.recovery_probability > 0.5 ? "var(--warning)" : "var(--error)",
-                    }}>
-                      {Math.round(c.recovery_probability * 100)}%
-                    </span>
-                  </div>
-                </td>
-                <td style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{c.recommended_action}</td>
-                <td><span className={`badge ${getStatusColor(c.status)}`}>{getStatusLabel(c.status)}</span></td>
-                <td>
-                  <Link href={`/dashboard/recovery-cases/${c.id}`} style={{ color: "var(--text-muted)", display: "flex", alignItems: "center" }}>
-                    <ArrowRight size={15} />
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filtered.length === 0 && (
-          <div style={{ padding: "48px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.875rem" }}>
-            No cases found for the selected filter.
+      {loading ? (
+        <div className="card" style={{ padding: "60px", textAlign: "center", color: "var(--text-muted)" }}>
+          <div className="ai-dot" style={{ margin: "0 auto 12px", width: 10, height: 10 }} />
+          Loading recovery cases…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="card" style={{ padding: "60px", textAlign: "center" }}>
+          <FolderOpen size={32} color="var(--text-muted)" style={{ margin: "0 auto 16px", display: "block" }} />
+          <div style={{ color: "var(--text-primary)", fontWeight: 600, marginBottom: "8px" }}>
+            {cases.length === 0 ? "No recovery cases yet" : "No cases match your filter"}
           </div>
-        )}
-      </div>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", maxWidth: 420, margin: "0 auto" }}>
+            {cases.length === 0
+              ? "Cases appear here automatically when Razorpay webhooks report failed payments. Make sure your webhook URL is configured and ngrok is running."
+              : "Try a different filter or search term."}
+          </p>
+        </div>
+      ) : (
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Case ID</th>
+                <th>Customer</th>
+                <th>Amount at Risk</th>
+                <th>Problem</th>
+                <th>Method</th>
+                <th>Recovery Prob.</th>
+                <th>Recommended Action</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((c) => (
+                <tr key={c.id} style={["action_required", "escalated"].includes(c.status) ? { background: "rgba(245,184,75,0.04)" } : undefined}>
+                  <td>
+                    <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: "var(--accent-green-soft)" }}>
+                      {c.id}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ fontWeight: 500, color: "var(--text-primary)", fontSize: "0.875rem" }}>{c.customer_name || "—"}</div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{c.customer_email || ""}</div>
+                  </td>
+                  <td>
+                    <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)" }}>
+                      ₹{(c.amount_at_risk ?? 0).toLocaleString()}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: "0.825rem" }}>{getFailureLabel(c.failure_reason)}</td>
+                  <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{c.payment_method || "—"}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div className="progress-bar" style={{ width: "60px" }}>
+                        <div className="progress-fill" style={{
+                          width: `${Math.round((c.recovery_probability ?? 0) * 100)}%`,
+                          background: (c.recovery_probability ?? 0) > 0.7 ? "var(--accent-green)" : (c.recovery_probability ?? 0) > 0.5 ? "var(--warning)" : "var(--error)",
+                        }} />
+                      </div>
+                      <span style={{
+                        fontSize: "0.8rem", fontWeight: 700,
+                        color: (c.recovery_probability ?? 0) > 0.7 ? "var(--accent-green)" : (c.recovery_probability ?? 0) > 0.5 ? "var(--warning)" : "var(--error)",
+                      }}>
+                        {Math.round((c.recovery_probability ?? 0) * 100)}%
+                      </span>
+                    </div>
+                  </td>
+                  <td style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{c.recommended_action || "—"}</td>
+                  <td>
+                    <span className={`badge ${getStatusColor(c.status)}`}>{getStatusLabel(c.status)}</span>
+                    {["action_required", "escalated"].includes(c.status) && (
+                      <span style={{ fontSize: "0.65rem", color: "var(--warning)", display: "block", marginTop: "2px" }}>
+                        ⚠ Needs review
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <Link href={`/dashboard/recovery-cases/${c.id}`} style={{ color: "var(--text-muted)", display: "flex", alignItems: "center" }}>
+                      <ArrowRight size={15} />
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

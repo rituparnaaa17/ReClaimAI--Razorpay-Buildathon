@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot, LayoutDashboard, FolderOpen, ArrowLeftRight,
-  Activity, BarChart2, Users, Settings, LogOut, Bell,
+  Activity, BarChart2, Users, Settings, LogOut, Bell, Link2,
 } from "lucide-react";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Overview", href: "/dashboard" },
   { icon: FolderOpen, label: "Recovery Cases", href: "/dashboard/recovery-cases" },
+  { icon: Link2, label: "Payment Links", href: "/dashboard/payment-links" },
   { icon: ArrowLeftRight, label: "Transactions", href: "/dashboard/transactions" },
   { icon: Activity, label: "AI Agent", href: "/dashboard/agent-activity" },
   { icon: BarChart2, label: "Analytics", href: "/dashboard/analytics" },
@@ -71,7 +72,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="ai-dot" style={{ width: "6px", height: "6px" }} />
             <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--accent-green)" }}>AI Agent Active</span>
           </div>
-          <p style={{ fontSize: "0.7rem", color: "var(--accent-green-soft)" }}>Monitoring 2,431 cases</p>
+          <p style={{ fontSize: "0.7rem", color: "var(--accent-green-soft)" }}>Razorpay Test Mode</p>
         </div>
 
         {/* User */}
