@@ -8,8 +8,9 @@ from typing import Dict, Any, TypedDict, List
 
 from app.config import get_settings
 from app.services.db_service import db_update_recovery_case, db_save_agent_log
-from app.services.razorpay_service import retry_payment, create_payment_link
+from app.services.razorpay_service import execute_recovery, verify_payment_status
 from app.services.gemini_client import generate_text
+from app.services.state_machine import RecoveryStateMachine
 
 settings = get_settings()
 
@@ -70,9 +71,8 @@ async def run_recovery_agent(case: Dict[str, Any]) -> Dict[str, Any]:
         if state["step"] == "GUARDRAIL" and not state["guardrail_passed"]:
             break
 
-    # Persist final status to Supabase
+    # Persist agent properties to Supabase
     await db_update_recovery_case(case["id"], {
-        "status": state["final_status"],
         "amount_recovered": state["amount_recovered"],
         "ai_reasoning": state["ai_reasoning"],
         "guardrail_passed": state["guardrail_passed"],
@@ -105,6 +105,7 @@ async def _log_step(state: AgentState, step: str, decision: str, reason: str, co
 
 async def _node_detect(state: AgentState) -> AgentState:
     state["step"] = "DETECT"
+    await RecoveryStateMachine.transition_case(state["case"]["id"], "detected", reason="Agent started", source="agent")
     await _log_step(
         state, "DETECT",
         "Payment failure event detected and queued for recovery",
@@ -116,6 +117,7 @@ async def _node_detect(state: AgentState) -> AgentState:
 
 async def _node_diagnose(state: AgentState) -> AgentState:
     state["step"] = "DIAGNOSE"
+    await RecoveryStateMachine.transition_case(state["case"]["id"], "analyzing", reason="Agent diagnosing", source="agent")
     failure = state["case"].get("failure_reason", "UNKNOWN")
     cause_map = {
         "UPI_TIMEOUT": "Temporary UPI network congestion caused the session to expire before payment confirmation.",
@@ -140,6 +142,7 @@ async def _node_diagnose(state: AgentState) -> AgentState:
 
 async def _node_predict(state: AgentState) -> AgentState:
     state["step"] = "PREDICT"
+    await RecoveryStateMachine.transition_case(state["case"]["id"], "predicting", reason="Agent predicting", source="agent")
     prob = state["recovery_probability"]
 
     # Try using Gemini to refine the probability reasoning
@@ -162,6 +165,7 @@ async def _node_predict(state: AgentState) -> AgentState:
 
 async def _node_decide(state: AgentState) -> AgentState:
     state["step"] = "DECIDE"
+    await RecoveryStateMachine.transition_case(state["case"]["id"], "deciding", reason="Agent deciding action", source="agent")
     failure = state["case"].get("failure_reason", "")
     prob = state["recovery_probability"]
 
@@ -203,18 +207,23 @@ async def _node_guardrail(state: AgentState) -> AgentState:
     if retry_count >= 2:
         state["guardrail_passed"] = False
         state["guardrail_reason"] = "Maximum retry limit (2) reached — escalated for human review"
-        state["final_status"] = "human_review"
+        state["final_status"] = "escalated"
+        await RecoveryStateMachine.transition_case(case["id"], "escalated", reason=state["guardrail_reason"], source="agent")
     elif amount > 50000:
         state["guardrail_passed"] = False
         state["guardrail_reason"] = f"Transaction ₹{amount:,.0f} exceeds ₹50,000 threshold — human approval required"
-        state["final_status"] = "human_review"
+        state["final_status"] = "action_required"
+        await RecoveryStateMachine.transition_case(case["id"], "action_required", reason=state["guardrail_reason"], source="agent")
     elif prob < 0.3:
         state["guardrail_passed"] = False
         state["guardrail_reason"] = f"Recovery probability {int(prob*100)}% below minimum (30%) — no action"
-        state["final_status"] = "at_risk"
+        state["final_status"] = "no_action"
+        await RecoveryStateMachine.transition_case(case["id"], "no_action", reason=state["guardrail_reason"], source="agent")
     else:
         state["guardrail_passed"] = True
         state["guardrail_reason"] = f"All checks passed · Retries {retry_count}/2 · Amount within limit · Prob {int(prob*100)}%"
+        state["final_status"] = "approved"
+        await RecoveryStateMachine.transition_case(case["id"], "approved", reason="Guardrail passed automatically", source="agent")
 
     await _log_step(
         state, "GUARDRAIL",
@@ -230,26 +239,30 @@ async def _node_execute(state: AgentState) -> AgentState:
         return state
 
     state["step"] = "EXECUTE"
+    await RecoveryStateMachine.transition_case(state["case"]["id"], "recovering", reason="Executing recovery action", source="agent")
     action = state["recommended_action"]
     case = state["case"]
 
     # Execute the actual recovery action
-    if action in ["Smart Retry", "Delayed Retry"]:
-        result = await retry_payment(case)
+    try:
+        result = await execute_recovery(action, case)
         state["razorpay_result"] = result
-    elif action in ["Personalized Reminder", "Alt. Payment Method", "Card Update Request"]:
-        result = await create_payment_link(case)
-        state["razorpay_result"] = result
-        result["success"] = True  # Link created = action executed successfully
-    else:
-        result = await retry_payment(case)
-        state["razorpay_result"] = result
+    except Exception as e:
+        state["razorpay_result"] = {
+            "status": "failed",
+            "action_attempted": action,
+            "razorpay_identifier": None,
+            "error_code": "UNHANDLED_EXCEPTION",
+            "error_description": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        result = state["razorpay_result"]
 
     await _log_step(
         state, "EXECUTE",
         f"Action executed: {action}" + (" via Razorpay test API" if settings.is_test_mode else " via Razorpay"),
-        f"Razorpay ID: {result.get('razorpay_payment_id', result.get('payment_link_id', 'N/A'))}",
-        0.94, "success" if result.get("success") else "pending"
+        f"Result status: {result['status']}, Razorpay ID: {result.get('razorpay_identifier', 'N/A')}",
+        0.94, "success" if result["status"] == "executed" else "pending"
     )
     return state
 
@@ -259,23 +272,59 @@ async def _node_verify(state: AgentState) -> AgentState:
         return state
 
     state["step"] = "VERIFY"
+    await RecoveryStateMachine.transition_case(state["case"]["id"], "verifying", reason="Agent execution check", source="agent")
+    
     result = state.get("razorpay_result", {})
-    success = result.get("success", False)
+    exec_status = result.get("status")
 
-    if success:
-        state["final_status"] = "recovered"
-        state["amount_recovered"] = state["case"]["amount_at_risk"]
-        decision = f"✓ ₹{state['amount_recovered']:,.0f} recovered successfully"
-        log_result = "success"
+    if exec_status == "executed":
+        # Step 5: Authoritative verification from Razorpay
+        verify_result = await verify_payment_status(state["case"])
+        
+        if verify_result["status"] == "recovered":
+            state["final_status"] = "recovered"
+            decision = "Payment captured successfully"
+            log_result = "success"
+            await RecoveryStateMachine.transition_case(state["case"]["id"], "recovered", reason="Razorpay confirmed payment captured", source="agent")
+        
+        elif verify_result["status"] == "not_recovered" and verify_result["razorpay_status"] == "failed":
+            state["final_status"] = "failed"
+            decision = "Payment confirmed failed by Razorpay"
+            log_result = "failed"
+            await RecoveryStateMachine.transition_case(state["case"]["id"], "failed", reason="Razorpay confirmed payment failed", source="agent")
+            
+        elif verify_result["status"] == "not_recovered":
+            state["final_status"] = "verifying"
+            decision = f"Payment status is {verify_result['razorpay_status']} — awaiting terminal state"
+            log_result = "pending"
+            # State remains in verifying
+            
+        else: # verification_failed
+            state["final_status"] = "verifying"
+            decision = f"Verification failed: {verify_result['error_description']}"
+            log_result = "pending"
+            # State remains in verifying
+            
+    elif exec_status == "failed":
+        state["final_status"] = "failed"
+        decision = "Recovery execution failed — Razorpay API error"
+        log_result = "failed"
+        await RecoveryStateMachine.transition_case(state["case"]["id"], "failed", reason=f"Execution failed: {result.get('error_description')}", source="agent")
+    elif exec_status in ["not_executable", "skipped"]:
+        state["final_status"] = "no_action"
+        decision = f"Execution skipped: {result.get('error_description')}"
+        log_result = "skipped"
+        await RecoveryStateMachine.transition_case(state["case"]["id"], "no_action", reason=result.get("error_description"), source="agent")
     else:
-        state["final_status"] = "at_risk"
-        decision = "Recovery attempt did not complete — will retry automatically"
-        log_result = "pending"
+        state["final_status"] = "failed"
+        decision = "Unknown execution state"
+        log_result = "failed"
+        await RecoveryStateMachine.transition_case(state["case"]["id"], "failed", reason="Unknown execution status", source="agent")
 
     await _log_step(
         state, "VERIFY",
         decision,
-        "Payment status verified via Razorpay" + (" (test mode)" if settings.is_test_mode else ""),
+        "Execution and current payment status verified",
         0.97, log_result
     )
     return state

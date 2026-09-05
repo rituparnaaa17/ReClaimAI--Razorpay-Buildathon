@@ -124,7 +124,8 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
 
   const prob = caseData.recovery_probability;
   const probColor = prob > 0.7 ? "var(--accent-green)" : prob > 0.5 ? "var(--warning)" : "var(--error)";
-  const canExecute = ["at_risk", "processing"].includes(caseData.status) && execState === "idle";
+  const terminalStates = ["recovered", "failed", "escalated", "no_action", "expired"];
+  const canExecute = !terminalStates.includes(caseData.status) && execState === "idle";
 
   return (
     <div>
@@ -169,10 +170,12 @@ export default function RecoveryCaseDetail({ params }: { params: Promise<{ id: s
                 <div style={{ fontSize: "0.72rem", color: "var(--accent-green-soft)", marginBottom: "2px" }}>Recovered</div>
                 <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--accent-green)" }}>₹{Number(caseData.amount_at_risk).toLocaleString()}</div>
               </div>
-            ) : caseData.status === "human_review" ? (
+            ) : ["action_required", "escalated", "human_review"].includes(caseData.status) ? (
               <div style={{ background: "rgba(196,181,253,0.1)", border: "1px solid rgba(196,181,253,0.2)", borderRadius: "12px", padding: "12px 20px", textAlign: "center" }}>
-                <div style={{ fontSize: "0.72rem", color: "#805AD5", marginBottom: "2px" }}>Human Review</div>
-                <div style={{ fontSize: "0.8rem", color: "#805AD5" }}>Awaiting approval</div>
+                <div style={{ fontSize: "0.72rem", color: "#805AD5", marginBottom: "2px" }}>
+                  {caseData.status === "escalated" ? "Escalated" : "Action Required"}
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#805AD5" }}>Awaiting human review</div>
               </div>
             ) : (
               <button

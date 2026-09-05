@@ -5,7 +5,11 @@ import { Search, Filter, ArrowRight, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { getStatusColor, getStatusLabel, getFailureLabel } from "@/lib/utils";
 
-const FILTERS = ["all", "at_risk", "processing", "recovered", "failed", "human_review"];
+const FILTERS = [
+  "all", "detected", "analyzing", "predicting", "deciding", 
+  "action_required", "approved", "recovering", "verifying", 
+  "recovered", "failed", "escalated", "no_action", "expired"
+];
 
 const MOCK_CASES = Array.from({ length: 25 }, (_, i) => ({
   id: `RC_${10001 + i}`,
@@ -15,7 +19,7 @@ const MOCK_CASES = Array.from({ length: 25 }, (_, i) => ({
   failure_reason: ["UPI_TIMEOUT","BANK_DECLINE","INSUFFICIENT_BALANCE","EXPIRED_CARD","TECHNICAL_FAILURE","ABANDONED","SUBSCRIPTION_FAILURE"][i % 7],
   recovery_probability: parseFloat((Math.random() * 0.7 + 0.2).toFixed(2)),
   recommended_action: ["Smart Retry","Personalized Reminder","Alt. Payment Method","Card Update Request","Smart Retry + Notify"][i % 5],
-  status: ["recovered","at_risk","processing","failed","human_review"][i % 5],
+  status: ["recovered","detected","analyzing","action_required","failed","recovering","verifying","no_action"][i % 8],
   payment_method: ["UPI","CARD","NETBANKING","WALLET"][i % 4],
   created_at: new Date(Date.now() - i * 3600000 * (1 + Math.random() * 5)).toISOString(),
 }));

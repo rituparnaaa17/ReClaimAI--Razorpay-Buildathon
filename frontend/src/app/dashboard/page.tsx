@@ -211,10 +211,10 @@ export default function DashboardPage() {
             <tbody>
               {(cases.length ? cases : [
                 { id: "RC_10000", customer_name: "Arjun Sharma", amount_at_risk: 4999, failure_reason: "UPI_TIMEOUT", recovery_probability: 0.91, recommended_action: "Smart Retry", status: "recovered" },
-                { id: "RC_10001", customer_name: "Priya Patel", amount_at_risk: 8200, failure_reason: "BANK_DECLINE", recovery_probability: 0.68, recommended_action: "Alt. Payment", status: "processing" },
-                { id: "RC_10002", customer_name: "Rahul Gupta", amount_at_risk: 1299, failure_reason: "ABANDONED", recovery_probability: 0.74, recommended_action: "Reminder", status: "at_risk" },
+                { id: "RC_10001", customer_name: "Priya Patel", amount_at_risk: 8200, failure_reason: "BANK_DECLINE", recovery_probability: 0.68, recommended_action: "Alt. Payment", status: "recovering" },
+                { id: "RC_10002", customer_name: "Rahul Gupta", amount_at_risk: 1299, failure_reason: "ABANDONED", recovery_probability: 0.74, recommended_action: "Reminder", status: "detected" },
                 { id: "RC_10003", customer_name: "Sneha Mehta", amount_at_risk: 15750, failure_reason: "EXPIRED_CARD", recovery_probability: 0.35, recommended_action: "Card Update", status: "failed" },
-                { id: "RC_10004", customer_name: "Vikram Singh", amount_at_risk: 52000, failure_reason: "TECHNICAL_FAILURE", recovery_probability: 0.82, recommended_action: "Smart Retry", status: "human_review" },
+                { id: "RC_10004", customer_name: "Vikram Singh", amount_at_risk: 52000, failure_reason: "TECHNICAL_FAILURE", recovery_probability: 0.82, recommended_action: "Smart Retry", status: "action_required" },
               ] as Record<string, unknown>[]).map((c) => {
                 const prob = Number(c.recovery_probability);
                 return (

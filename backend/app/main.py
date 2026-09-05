@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import transactions, recovery, agent, analytics, webhooks
+from app.api import transactions, recovery, agent, analytics, webhooks, batch
 from app.config import get_settings
 
 settings = get_settings()
@@ -25,6 +25,7 @@ app.include_router(recovery.router, prefix="/api/recovery", tags=["Recovery"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
+app.include_router(batch.router, prefix="/api/recovery", tags=["Batch"])
 
 
 @app.get("/")

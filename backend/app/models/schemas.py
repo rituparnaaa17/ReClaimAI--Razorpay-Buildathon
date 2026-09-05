@@ -49,7 +49,11 @@ class RecoveryCaseOut(BaseModel):
     root_cause: Optional[str] = None
     recommended_action: Optional[str] = None
     action_taken: Optional[str] = None
-    status: Literal["at_risk", "processing", "recovered", "failed", "human_review"]
+    status: Literal[
+        "at_risk", "processing", "recovered", "failed", "human_review",
+        "detected", "analyzing", "predicting", "deciding", "action_required",
+        "approved", "recovering", "verifying", "escalated", "no_action", "expired"
+    ]
     payment_method: str
     failure_reason: Optional[str] = None
     created_at: datetime

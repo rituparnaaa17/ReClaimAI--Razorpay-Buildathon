@@ -8,8 +8,9 @@ from typing import Dict, Any
 
 from app.config import get_settings
 from app.services.db_service import db_update_recovery_case, db_save_agent_log
-from app.services.razorpay_service import create_payment_link, retry_payment
+from app.services.razorpay_service import execute_recovery
 from app.services.gemini_client import generate_text
+from app.services.state_machine import RecoveryStateMachine
 
 settings = get_settings()
 
@@ -45,38 +46,38 @@ async def execute_recovery_action(case: Dict[str, Any]) -> Dict[str, Any]:
     guardrail = _check_guardrails(case)
 
     if not guardrail["passed"]:
-        await db_update_recovery_case(case["id"], {"status": "human_review"})
+        await RecoveryStateMachine.transition_case(case["id"], "action_required", reason=guardrail["reason"], source="system")
         return {
             "case_id": case["id"],
-            "status": "human_review",
+            "status": "action_required",
             "reason": guardrail["reason"],
             "amount_recovered": None,
             "executed_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    # Ensure we transition to recovering before execution
+    await RecoveryStateMachine.transition_case(case["id"], "recovering", reason="Executing recovery strategy", source="system")
     action = case.get("recommended_action", "Smart Retry")
 
     # Execute based on recommended action
-    if action in ["Smart Retry", "Delayed Retry"]:
-        result = await retry_payment(case)
-    elif action in ["Personalized Reminder", "Alt. Payment Method", "Alternative Payment Method"]:
-        result = await create_payment_link(case)
-        result["success"] = True  # link created = action successful
-    else:
-        result = await retry_payment(case)
+    exec_result = await execute_recovery(action, case)
 
     # Determine final status
-    if result.get("success"):
-        new_status = "recovered"
-        amount_recovered = case["amount_at_risk"]
-    else:
-        retry_count = case.get("retry_count", 0) + 1
-        new_status = "failed" if retry_count >= 2 else "at_risk"
+    await RecoveryStateMachine.transition_case(case["id"], "verifying", reason="Verifying recovery status", source="system")
+    if exec_result["status"] == "executed":
+        new_status = "verifying" # Step 4 logic
         amount_recovered = None
+    elif exec_result["status"] == "failed":
+        new_status = "failed"
+        amount_recovered = None
+    else:
+        new_status = "no_action"
+        amount_recovered = None
+
+    await RecoveryStateMachine.transition_case(case["id"], new_status, reason="Recovery execution completed", source="system")
 
     # Write to Supabase
     updates: Dict[str, Any] = {
-        "status": new_status,
         "action_taken": action,
         "retry_count": case.get("retry_count", 0) + 1,
     }
@@ -90,7 +91,7 @@ async def execute_recovery_action(case: Dict[str, Any]) -> Dict[str, Any]:
         "status": new_status,
         "action_taken": action,
         "amount_recovered": amount_recovered,
-        "razorpay_result": result,
+        "razorpay_result": exec_result,
         "executed_at": datetime.now(timezone.utc).isoformat(),
     }
 
