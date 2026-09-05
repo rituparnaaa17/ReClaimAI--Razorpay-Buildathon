@@ -42,7 +42,7 @@ export default function InteractiveDemo() {
           </p>
         </div>
 
-        <div style={{
+        <div className="responsive-grid-1" style={{
           maxWidth: "840px", margin: "0 auto",
           display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px",
         }}>

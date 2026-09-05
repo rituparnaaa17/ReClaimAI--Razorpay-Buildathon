@@ -323,3 +323,63 @@ a { color: inherit; text-decoration: none; }
   border-color: rgba(255,255,255,0.2);
   transform: translateY(-2px);
 }
+
+/* ─── Responsive Media Queries ────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: -280px;
+    bottom: 0;
+    z-index: 150;
+    width: 280px;
+    background: #0B0F19;
+    transition: left 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 10px 0 40px rgba(0, 0, 0, 0.7);
+  }
+  .sidebar.mobile-open {
+    left: 0;
+  }
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 140;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+  }
+}
+
+@media (max-width: 768px) {
+  .section { padding: 50px 0; }
+  .container { padding: 0 16px; }
+  .navbar-desktop { display: none !important; }
+  .navbar-mobile-btn { display: flex !important; }
+  
+  .responsive-grid-1 { grid-template-columns: 1fr !important; }
+  .responsive-grid-2 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) !important; }
+  .responsive-flex-col { flex-direction: column !important; align-items: stretch !important; }
+  .responsive-padding { padding: 16px !important; }
+  
+  /* Tables horizontally scrollable on mobile without breaking viewport width */
+  .table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    border-radius: var(--radius-md);
+  }
+  .data-table {
+    min-width: 650px;
+  }
+
+  /* Compact button styling on mobile */
+  .btn-responsive {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Responsive typography adjustments */
+  h1 { font-size: 2.2rem !important; }
+  h2 { font-size: 1.75rem !important; }
+  h3 { font-size: 1.25rem !important; }
+}
+

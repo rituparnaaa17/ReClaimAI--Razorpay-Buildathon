@@ -109,7 +109,7 @@ export default function PaymentLinksPage() {
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+      <div className="responsive-flex-col" style={{ marginBottom: "24px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
         <div>
           <h2 style={{ fontSize: "1.5rem", marginBottom: "4px" }}>Payment Links</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
@@ -128,7 +128,7 @@ export default function PaymentLinksPage() {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "28px" }}>
+      <div className="responsive-grid-2" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "28px" }}>
         {[
           { label: "Total Links", value: loading ? "…" : links.length, color: "#3366FF" },
           { label: "Agent Created", value: loading ? "…" : agentCreated, color: "var(--accent-green-soft)" },

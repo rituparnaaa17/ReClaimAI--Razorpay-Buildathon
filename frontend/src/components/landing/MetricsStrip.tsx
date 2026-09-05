@@ -29,7 +29,7 @@ export default function MetricsStrip() {
       position: "relative",
     }}>
       <div className="container">
-        <div style={{
+        <div className="responsive-grid-2" style={{
           display: "grid",
           gridTemplateColumns: "repeat(4, 1fr)",
           gap: "1px",

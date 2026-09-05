@@ -84,7 +84,7 @@ export default function AgentSection() {
         </div>
 
         {/* Steps grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "2px", position: "relative" }}>
+        <div className="responsive-grid-1" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "2px", position: "relative" }}>
           {steps.map((step, i) => {
             const Icon = step.icon;
             const isActive = activeStep === step.key;

@@ -92,12 +92,12 @@ export default function DashboardPage() {
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: "28px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div className="responsive-flex-col" style={{ marginBottom: "28px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
         <div>
           <h2 style={{ fontSize: "1.5rem", marginBottom: "4px" }}>Revenue Overview</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Real-time AI recovery analytics</p>
         </div>
-        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
           {/* Live Gemini insight pill */}
           <div style={{
             display: "flex", alignItems: "center", gap: "8px", maxWidth: "340px",
@@ -118,7 +118,7 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "28px" }}>
+      <div className="responsive-grid-2" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "28px" }}>
         {kpis.map((k) => {
           const Icon = k.icon;
           return (
@@ -138,7 +138,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Charts row */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "20px", marginBottom: "28px" }}>
+      <div className="responsive-grid-1" style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "20px", marginBottom: "28px" }}>
         <div className="card" style={{ padding: "24px" }}>
           <h3 style={{ fontSize: "1rem", marginBottom: "4px" }}>Revenue Trend</h3>
           <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "20px" }}>At-risk vs recovered (14 days)</p>

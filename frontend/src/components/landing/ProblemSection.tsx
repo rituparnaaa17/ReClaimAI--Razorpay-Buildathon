@@ -65,7 +65,7 @@ export default function ProblemSection() {
         </div>
 
         {/* Cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
+        <div className="responsive-grid-1" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
           {problems.map((problem, i) => {
             const Icon = problem.icon;
             return (

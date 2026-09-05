@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot, LayoutDashboard, FolderOpen, ArrowLeftRight,
-  Activity, BarChart2, Users, Settings, LogOut, Bell, Link2,
+  Activity, BarChart2, Users, Settings, LogOut, Bell, Link2, Menu, X
 } from "lucide-react";
 
 const navItems = [
@@ -21,6 +21,7 @@ const navItems = [
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [time, setTime] = useState("");
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     const update = () => setTime(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
@@ -30,12 +31,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, []);
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--bg-primary)" }}>
+    <div style={{ display: "flex", minHeight: "100vh", background: "var(--bg-primary)", position: "relative" }}>
+      {/* Mobile Backdrop */}
+      {mobileOpen && (
+        <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}>
         {/* Logo */}
-        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid var(--border-subtle)", marginBottom: "12px" }}>
-          <Link href="/" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid var(--border-subtle)", marginBottom: "12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Link href="/" onClick={() => setMobileOpen(false)} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <div style={{
               width: "32px", height: "32px", borderRadius: "8px",
               background: "var(--accent-green)", display: "flex",
@@ -45,6 +51,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             <span style={{ fontWeight: 700, fontSize: "1rem", color: "var(--text-primary)" }}>ReclaimAI</span>
           </Link>
+
+          <button
+            className="navbar-mobile-btn"
+            onClick={() => setMobileOpen(false)}
+            style={{ display: "none", background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}
+          >
+            <X size={20} />
+          </button>
         </div>
 
         {/* Nav */}
@@ -52,7 +66,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {navItems.map(({ icon: Icon, label, href }) => {
             const active = pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
             return (
-              <Link key={href} href={href} className={`sidebar-link ${active ? "active" : ""}`}>
+              <Link
+                key={href}
+                href={href}
+                className={`sidebar-link ${active ? "active" : ""}`}
+                onClick={() => setMobileOpen(false)}
+              >
                 <Icon size={16} />
                 <span>{label}</span>
               </Link>
@@ -109,30 +128,53 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <header style={{
           height: "60px", borderBottom: "1px solid var(--border-subtle)",
           background: "var(--bg-secondary)",
-          display: "flex", alignItems: "center", justifyContent: "flex-end",
-          padding: "0 28px", gap: "16px", flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "0 16px", gap: "16px", flexShrink: 0,
         }}>
-          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{time}</span>
-          <button style={{
-            width: "36px", height: "36px", borderRadius: "8px",
-            background: "var(--bg-card)", border: "1px solid var(--border-subtle)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "var(--text-muted)", cursor: "pointer",
-          }}>
-            <Bell size={16} />
-          </button>
-          <div style={{
-            width: "36px", height: "36px", borderRadius: "8px",
-            background: "var(--accent-green-dim)", border: "1px solid var(--border-green)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "0.85rem", fontWeight: 700, color: "var(--accent-green)",
-          }}>
-            M
+          {/* Mobile Menu Toggle Button */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <button
+              className="navbar-mobile-btn"
+              onClick={() => setMobileOpen(!mobileOpen)}
+              style={{
+                display: "none",
+                width: "36px", height: "36px", borderRadius: "8px",
+                background: "var(--bg-card)", border: "1px solid var(--border-subtle)",
+                alignItems: "center", justifyContent: "center",
+                color: "var(--text-primary)", cursor: "pointer",
+              }}
+              aria-label="Toggle Navigation Menu"
+            >
+              {mobileOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            <span style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Bot size={16} className="text-green" /> ReclaimAI
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{time}</span>
+            <button style={{
+              width: "36px", height: "36px", borderRadius: "8px",
+              background: "var(--bg-card)", border: "1px solid var(--border-subtle)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "var(--text-muted)", cursor: "pointer",
+            }}>
+              <Bell size={16} />
+            </button>
+            <div style={{
+              width: "36px", height: "36px", borderRadius: "8px",
+              background: "var(--accent-green-dim)", border: "1px solid var(--border-green)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "0.85rem", fontWeight: 700, color: "var(--accent-green)",
+            }}>
+              M
+            </div>
           </div>
         </header>
 
         {/* Page content */}
-        <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
+        <main className="responsive-padding" style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
           {children}
         </main>
       </div>

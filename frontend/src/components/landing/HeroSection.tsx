@@ -103,10 +103,10 @@ export default function HeroSection() {
         position: "relative",
       }}
     >
-      <div className="container" style={{
+      <div className="container responsive-grid-1" style={{
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
-        gap: "60px",
+        gap: "40px",
         alignItems: "center",
       }}>
         {/* Left Side (Text content) */}

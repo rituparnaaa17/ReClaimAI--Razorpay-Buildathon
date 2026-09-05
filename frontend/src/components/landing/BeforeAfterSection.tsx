@@ -76,13 +76,13 @@ export default function BeforeAfterSection() {
         </div>
 
         {/* Split screen */}
-        <div style={{ display: "flex", gap: "24px", alignItems: "stretch" }}>
+        <div className="responsive-flex-col" style={{ display: "flex", gap: "24px", alignItems: "stretch" }}>
           <FlowList steps={withoutSteps} label="Without ReclaimAI" accent="var(--error)" />
 
           {/* Arrow divider */}
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "center",
-            flexShrink: 0,
+            flexShrink: 0, padding: "12px 0"
           }}>
             <div style={{
               width: "48px", height: "48px", borderRadius: "50%",
@@ -98,7 +98,7 @@ export default function BeforeAfterSection() {
         </div>
 
         {/* Result banner */}
-        <div style={{
+        <div className="responsive-flex-col" style={{
           marginTop: "40px",
           background: "var(--accent-green-dim)",
           border: "1px solid var(--border-green)",
@@ -107,6 +107,7 @@ export default function BeforeAfterSection() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: "16px"
         }}>
           <div>
             <div style={{ fontSize: "0.78rem", color: "var(--accent-green)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "4px" }}>

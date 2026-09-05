@@ -37,7 +37,7 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop Nav */}
-        <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
+        <div className="navbar-desktop" style={{ display: "flex", alignItems: "center", gap: "32px" }}>
           {navLinks.map((link) => (
             <a key={link.label} href={link.href} style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500, transition: "color 0.2s" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
@@ -53,7 +53,7 @@ export default function Navbar() {
             Sign In
           </Link>
           <button
-            className="btn btn-ghost"
+            className="navbar-mobile-btn btn btn-ghost"
             onClick={() => setMobileOpen(!mobileOpen)}
             style={{ display: "none" }}
             id="mobile-menu-btn"
