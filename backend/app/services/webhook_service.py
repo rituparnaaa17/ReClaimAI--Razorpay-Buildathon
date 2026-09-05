@@ -154,17 +154,39 @@ async def _resolve_merchant_id() -> Optional[str]:
 
 async def handle_payment_failed(payment: Dict[str, Any], event_id: str) -> Dict[str, Any]:
     """
-    payment.failed → create a new recovery case and trigger the LangGraph agent.
-    The agent is launched via asyncio.create_task() so the handler returns immediately.
+    payment.failed → if for an existing recovery case (e.g. payment link attempt), update status to failed.
+    Otherwise create a new recovery case and trigger the LangGraph agent.
     """
-    from app.agents.recovery_agent import run_recovery_agent  # lazy import
-
     payment_id    = payment.get("id", "")
     amount_paise  = int(payment.get("amount") or 0)
     amount_rupees = _paise_to_rupees(amount_paise)
     error_code    = payment.get("error_code")
     error_desc    = payment.get("error_description")
     failure_reason = _map_failure_reason(error_code, error_desc)
+
+    # 1. Check if this payment failure belongs to an existing recovery case (e.g. payment link attempt)
+    existing_case = await _find_case_for_payment(payment)
+    if existing_case:
+        case_id = existing_case["id"]
+        terminal = {"recovered", "failed", "escalated", "no_action", "expired"}
+        if existing_case.get("status") not in terminal:
+            await RecoveryStateMachine.force_transition(
+                case_id, "failed",
+                reason=f"Razorpay webhook: payment.failed (payment_id={payment_id}, reason={failure_reason})",
+                source="webhook",
+            )
+            await db_update_recovery_case(case_id, {"status": "failed"})
+            logger.info(f"[Webhook] payment.failed → updated existing case {case_id} status to failed")
+            return {
+                "event": "payment.failed",
+                "payment_id": payment_id,
+                "case_id": case_id,
+                "status": "failed",
+                "updated_existing": True,
+            }
+
+    # 2. Otherwise create a new recovery case (fresh failure event)
+    from app.agents.recovery_agent import run_recovery_agent  # lazy import
     merchant_id   = await _resolve_merchant_id()
 
     case_data = {
@@ -176,7 +198,7 @@ async def handle_payment_failed(payment: Dict[str, Any], event_id: str) -> Dict[
         "payment_method":      (payment.get("method") or "UNKNOWN").upper(),
         "customer_email":      payment.get("email"),
         "customer_name":       payment.get("customer") or payment.get("email", "").split("@")[0] or "Unknown",
-        "recovery_probability": 0.65,  # default; agent will refine
+        "recovery_probability": 0.65,
         "retry_count":         0,
         "guardrail_passed":    False,
     }
@@ -184,7 +206,6 @@ async def handle_payment_failed(payment: Dict[str, Any], event_id: str) -> Dict[
     case_id = await db_create_recovery_case(case_data)
     logger.info(f"[Webhook] payment.failed → case {case_id} created (payment={payment_id}, ₹{amount_rupees})")
 
-    # Trigger recovery agent in background — do not await
     if case_id:
         case_data["id"] = case_id
         asyncio.create_task(run_recovery_agent(case_data))

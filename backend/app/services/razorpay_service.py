@@ -112,7 +112,18 @@ async def execute_recovery(action: str, case: Dict[str, Any]) -> ExecutionResult
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    if True: # Always generate a link for demo purposes to demonstrate end-to-end recovery
+async def execute_recovery(action: str, case: Dict[str, Any]) -> ExecutionResult:
+    """
+    The strict execution boundary. Attempts to map an approved AI action
+    to a legitimate Razorpay Test Mode operation.
+    """
+    if not settings.is_test_mode:
+        raise RuntimeError("Reclaim execution is restricted to Razorpay Test Mode only.")
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    # Dynamic action execution mapping
+    if action in ["Smart Retry", "Alt. Payment Method", "Personalized Reminder", "Card Update Request"]:
         try:
             result = await create_payment_link(case)
             return {
@@ -150,22 +161,13 @@ async def execute_recovery(action: str, case: Dict[str, Any]) -> ExecutionResult
                 "error_description": str(e),
                 "timestamp": timestamp,
             }
-    elif action == "Smart Retry":
-        return {
-            "status": "not_executable",
-            "action_attempted": action,
-            "razorpay_identifier": None,
-            "error_code": None,
-            "error_description": "Standard checkout payments cannot be retried via API without customer interaction",
-            "timestamp": timestamp,
-        }
-    elif action in ["Delayed Retry", "Wait", "WAIT"]:
+    elif action in ["Delayed Retry", "Wait", "WAIT", "no_action"]:
         return {
             "status": "skipped",
             "action_attempted": action,
             "razorpay_identifier": None,
             "error_code": None,
-            "error_description": "Execution intentionally scheduled for later (skipped for now)",
+            "error_description": "Execution intentionally scheduled for later or skipped by strategy",
             "timestamp": timestamp,
         }
     else:
@@ -199,27 +201,34 @@ async def verify_payment_status(case: Dict[str, Any]) -> VerificationResult:
     client = get_razorpay_client()
 
     try:
-        # 1. If we generated a payment link, check the link status
+        # 1. If we generated a payment link, check the link status and payment attempts
         if payment_link_id and payment_link_id.startswith("plink_"):
             plink = client.payment_link.fetch(payment_link_id)
             plink_status = plink.get("status")
-            
-            if plink_status == "paid":
+            payments = plink.get("payments") or []
+
+            captured_pmt = next((p for p in payments if isinstance(p, dict) and p.get("status") == "captured"), None)
+            failed_pmt = next((p for p in payments if isinstance(p, dict) and p.get("status") == "failed"), None)
+
+            if plink_status == "paid" or captured_pmt:
+                pmt_id = (captured_pmt.get("payment_id") if isinstance(captured_pmt, dict) else None) or payment_link_id
                 return {
                     "status": "recovered",
                     "razorpay_status": "captured",
-                    "payment_id": payment_link_id,
-                    "razorpay_payment": dict(plink),
+                    "payment_id": pmt_id,
+                    "razorpay_payment": dict(captured_pmt) if captured_pmt else dict(plink),
                     "error_description": None,
                     "timestamp": timestamp,
                 }
-            elif plink_status in ["cancelled", "expired"]:
+            elif plink_status in ["cancelled", "expired"] or (failed_pmt and not captured_pmt):
+                pmt_id = (failed_pmt.get("payment_id") if isinstance(failed_pmt, dict) else None) or payment_link_id
+                err_desc = (failed_pmt.get("error_description") or failed_pmt.get("reason")) if isinstance(failed_pmt, dict) else f"Payment link {plink_status}"
                 return {
                     "status": "not_recovered",
                     "razorpay_status": "failed",
-                    "payment_id": payment_link_id,
-                    "razorpay_payment": None,
-                    "error_description": f"Payment link {plink_status}",
+                    "payment_id": pmt_id,
+                    "razorpay_payment": dict(failed_pmt) if isinstance(failed_pmt, dict) else None,
+                    "error_description": err_desc,
                     "timestamp": timestamp,
                 }
             else:
