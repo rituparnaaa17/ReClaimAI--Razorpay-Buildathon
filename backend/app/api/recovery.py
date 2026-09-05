@@ -16,6 +16,24 @@ async def list_recovery_cases(
     offset: int = Query(0),
 ):
     cases = await db_get_recovery_cases(status=status)
+    # Auto-sync live statuses for active recovering/verifying cases
+    for i, c in enumerate(cases):
+        if c.get("status") in ["recovering", "verifying"] and (c.get("razorpay_payment_link_id") or c.get("razorpay_payment_id")):
+            try:
+                v_res = await verify_payment_status(c)
+                if v_res["status"] == "recovered":
+                    await RecoveryStateMachine.force_transition(c["id"], "recovered", reason="Live status sync from Razorpay", source="system")
+                    meas = measure_recovered_amount(verification_result=v_res, razorpay_payment=v_res.get("razorpay_payment"))
+                    amt = float(meas["amount_rupees"]) if meas["status"] == "measured" and meas["amount_rupees"] is not None else float(c.get("amount_at_risk", 0))
+                    await db_update_recovery_case(c["id"], {"status": "recovered", "amount_recovered": amt})
+                    cases[i] = {**c, "status": "recovered", "amount_recovered": amt}
+                elif v_res["status"] == "not_recovered" and v_res.get("razorpay_status") in ["failed", "cancelled", "expired"]:
+                    await RecoveryStateMachine.force_transition(c["id"], "failed", reason="Live status sync: payment failed/cancelled/expired", source="system")
+                    await db_update_recovery_case(c["id"], {"status": "failed"})
+                    cases[i] = {**c, "status": "failed"}
+            except Exception as e:
+                print(f"[Recovery API] Live sync warning for case {c.get('id')}: {e}")
+
     return cases[offset: offset + limit]
 
 
@@ -40,8 +58,8 @@ async def get_recovery_case(case_id: str):
                 amt = float(meas["amount_rupees"]) if meas["status"] == "measured" and meas["amount_rupees"] is not None else float(case.get("amount_at_risk", 0))
                 await db_update_recovery_case(case_id, {"status": "recovered", "amount_recovered": amt})
                 case = await db_get_recovery_case(case_id)
-            elif v_res["status"] == "not_recovered" and v_res.get("razorpay_status") == "failed":
-                await RecoveryStateMachine.force_transition(case_id, "failed", reason="Live status sync: payment link failed/cancelled", source="system")
+            elif v_res["status"] == "not_recovered" and v_res.get("razorpay_status") in ["failed", "cancelled", "expired"]:
+                await RecoveryStateMachine.force_transition(case_id, "failed", reason="Live status sync: payment failed/cancelled/expired", source="system")
                 await db_update_recovery_case(case_id, {"status": "failed"})
                 case = await db_get_recovery_case(case_id)
         except Exception as e:
