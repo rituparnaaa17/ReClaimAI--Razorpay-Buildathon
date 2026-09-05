@@ -199,7 +199,7 @@ export default function AnalyticsPage() {
               <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
                 {pieData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
               </Pie>
-              <Tooltip formatter={(v: number, name: string) => [v, name]} contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: "8px" }} />
+              <Tooltip formatter={(v: any, name: any) => [v, name]} contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: "8px" }} />
             </PieChart>
           </ResponsiveContainer>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", justifyContent: "center" }}>

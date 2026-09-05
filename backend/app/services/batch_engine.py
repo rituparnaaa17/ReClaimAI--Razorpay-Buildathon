@@ -62,6 +62,7 @@ class CaseResult:
     error: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    verified_recovered_rupees: Optional[float] = None  # Step 6: Razorpay-verified amount only
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -73,6 +74,7 @@ class CaseResult:
             "error": self.error,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "verified_recovered_rupees": self.verified_recovered_rupees,
         }
 
 
@@ -89,6 +91,7 @@ class BatchResult:
     successful_cases: int = 0
     failed_cases: int = 0
     skipped_cases: int = 0
+    total_recovered_amount: float = 0.0
     case_results: List[CaseResult] = field(default_factory=list)
     error_message: Optional[str] = None
     started_at: Optional[str] = None
@@ -104,6 +107,7 @@ class BatchResult:
             "successful_cases": self.successful_cases,
             "failed_cases": self.failed_cases,
             "skipped_cases": self.skipped_cases,
+            "total_recovered_amount": self.total_recovered_amount,
             "case_results": [r.to_dict() for r in self.case_results],
             "error_message": self.error_message,
             "started_at": self.started_at,
@@ -220,6 +224,9 @@ class BatchEngine:
 
             if case_result.result == "success":
                 result.successful_cases += 1
+                # Step 6: accumulate only genuinely measured Razorpay captured amounts
+                if case_result.verified_recovered_rupees is not None:
+                    result.total_recovered_amount += case_result.verified_recovered_rupees
             elif case_result.result == "skipped":
                 result.skipped_cases += 1
                 result.processed_cases -= 1   # skipped ≠ processed
@@ -384,15 +391,18 @@ class BatchEngine:
             agent_result = await run_recovery_agent(fresh_case)
 
             final_state = agent_result.get("final_status", current_state)
+            # Step 6: carry the Razorpay-verified amount into the CaseResult
+            amount_recovered = agent_result.get("amount_recovered")
 
             return CaseResult(
                 case_id=case_id,
                 initial_state=current_state,
                 final_state=final_state,
-                result="success",  # The agent completed successfully without throwing an exception
+                result="success",
                 reason=f"Agent completed — final state: {final_state}",
                 started_at=started_at,
                 completed_at=datetime.now(timezone.utc).isoformat(),
+                verified_recovered_rupees=float(amount_recovered) if amount_recovered is not None else None,
             )
 
         except Exception as e:

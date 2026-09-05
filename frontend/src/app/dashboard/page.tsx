@@ -34,14 +34,7 @@ const FALLBACK_TREND = Array.from({ length: 14 }, (_, i) => {
   };
 });
 
-const FAILURE_BREAKDOWN = [
-  { reason: "UPI Timeout", rate: 90 },
-  { reason: "Abandoned", rate: 71 },
-  { reason: "Bank Decline", rate: 55 },
-  { reason: "Insuf. Balance", rate: 40 },
-  { reason: "Expired Card", rate: 35 },
-];
-const COLORS = ["#3366FF", "#67C99A", "#F5B84B", "#FF6262", "#3366FF"];
+const COLORS = ["#3366FF", "#67C99A", "#F5B84B", "#FF6262", "#805AD5"];
 
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { color: string; name: string; value: number }[]; label?: string }) => {
   if (!active || !payload?.length) return null;
@@ -173,20 +166,44 @@ export default function DashboardPage() {
 
         <div className="card" style={{ padding: "24px" }}>
           <h3 style={{ fontSize: "1rem", marginBottom: "4px" }}>By Failure Reason</h3>
-          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "20px" }}>Recovery rate per type</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {FAILURE_BREAKDOWN.map((d, i) => (
-              <div key={d.reason}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{d.reason}</span>
-                  <span style={{ fontSize: "0.75rem", fontWeight: 700, color: COLORS[i] }}>{d.rate}%</span>
-                </div>
-                <div className="progress-bar">
-                  <div className="progress-fill" style={{ width: `${d.rate}%`, background: COLORS[i] }} />
-                </div>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "20px" }}>Recovery rate per type (live)</p>
+          {(() => {
+            // Derive breakdown from live cases
+            const REASON_LABELS: Record<string, string> = {
+              UPI_TIMEOUT: "UPI Timeout", BANK_DECLINE: "Bank Decline",
+              ABANDONED: "Abandoned", INSUFFICIENT_BALANCE: "Insuf. Balance",
+              EXPIRED_CARD: "Expired Card", TECHNICAL_FAILURE: "Technical",
+            };
+            const counts: Record<string, { total: number; recovered: number }> = {};
+            cases.forEach((c) => {
+              const r = (c.failure_reason as string) || "OTHER";
+              if (!counts[r]) counts[r] = { total: 0, recovered: 0 };
+              counts[r].total++;
+              if (c.status === "recovered") counts[r].recovered++;
+            });
+            const breakdown = Object.entries(counts)
+              .map(([r, v]) => ({ reason: REASON_LABELS[r] || r, rate: v.total > 0 ? Math.round((v.recovered / v.total) * 100) : 0 }))
+              .sort((a, b) => b.rate - a.rate)
+              .slice(0, 5);
+            if (!breakdown.length) {
+              return <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", textAlign: "center", padding: "20px 0" }}>No cases yet</p>;
+            }
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {breakdown.map((d, i) => (
+                  <div key={d.reason}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{d.reason}</span>
+                      <span style={{ fontSize: "0.75rem", fontWeight: 700, color: COLORS[i] }}>{d.rate}%</span>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{ width: `${d.rate}%`, background: COLORS[i] }} />
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -209,13 +226,13 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {(cases.length ? cases : [
-                { id: "RC_10000", customer_name: "Arjun Sharma", amount_at_risk: 4999, failure_reason: "UPI_TIMEOUT", recovery_probability: 0.91, recommended_action: "Smart Retry", status: "recovered" },
-                { id: "RC_10001", customer_name: "Priya Patel", amount_at_risk: 8200, failure_reason: "BANK_DECLINE", recovery_probability: 0.68, recommended_action: "Alt. Payment", status: "recovering" },
-                { id: "RC_10002", customer_name: "Rahul Gupta", amount_at_risk: 1299, failure_reason: "ABANDONED", recovery_probability: 0.74, recommended_action: "Reminder", status: "detected" },
-                { id: "RC_10003", customer_name: "Sneha Mehta", amount_at_risk: 15750, failure_reason: "EXPIRED_CARD", recovery_probability: 0.35, recommended_action: "Card Update", status: "failed" },
-                { id: "RC_10004", customer_name: "Vikram Singh", amount_at_risk: 52000, failure_reason: "TECHNICAL_FAILURE", recovery_probability: 0.82, recommended_action: "Smart Retry", status: "action_required" },
-              ] as Record<string, unknown>[]).map((c) => {
+              {cases.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px", fontSize: "0.85rem" }}>
+                    No recovery cases yet. Cases appear here once failed payments are detected.
+                  </td>
+                </tr>
+              ) : cases.map((c) => {
                 const prob = Number(c.recovery_probability);
                 return (
                   <tr key={c.id as string} style={{ cursor: "pointer" }} onClick={() => window.location.href = `/dashboard/recovery-cases/${c.id}`}>

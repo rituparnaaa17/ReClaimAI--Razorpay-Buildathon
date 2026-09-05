@@ -2,6 +2,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...options?.headers,
@@ -46,4 +47,27 @@ export const api = {
     request<unknown[]>(`/api/agent/logs/${caseId}`),
   getAllAgentLogs: () =>
     request<unknown[]>("/api/agent/logs"),
+  humanReview: (caseId: string, decision: "approve" | "reject" | "escalate", note?: string) =>
+    request<Record<string, unknown>>(`/api/agent/human-review/${caseId}`, {
+      method: "POST",
+      body: JSON.stringify({ decision, reviewer_note: note }),
+    }),
+
+  // Payment Links
+  getPaymentLinks: (count = 20) =>
+    request<unknown[]>(`/api/payment-links?count=${count}`),
+  getPaymentLink: (id: string) =>
+    request<Record<string, unknown>>(`/api/payment-links/${id}`),
+  createPaymentLink: (body: {
+    amount: number;
+    customer_name: string;
+    customer_email: string;
+    customer_contact?: string;
+    description?: string;
+    case_id?: string;
+  }) =>
+    request<Record<string, unknown>>("/api/payment-links", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
