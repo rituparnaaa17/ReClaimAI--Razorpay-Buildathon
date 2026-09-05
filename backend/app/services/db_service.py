@@ -9,12 +9,35 @@ import uuid
 from app.services.supabase_client import get_supabase
 
 
+def _format_case_dict(c: Dict) -> Dict:
+    formatted = dict(c)
+    txn = formatted.get("transactions") or {}
+    if isinstance(txn, dict):
+        formatted["failure_reason"] = formatted.get("failure_reason") or txn.get("failure_reason")
+        formatted["payment_method"] = formatted.get("payment_method") or txn.get("payment_method")
+        formatted["razorpay_payment_id"] = formatted.get("razorpay_payment_id") or txn.get("razorpay_payment_id")
+        cust = txn.get("customers") or {}
+        if isinstance(cust, dict):
+            formatted["customer_name"] = formatted.get("customer_name") or cust.get("name")
+            formatted["customer_email"] = formatted.get("customer_email") or cust.get("email")
+
+    formatted["failure_reason"] = formatted.get("failure_reason") or "UNKNOWN"
+    formatted["payment_method"] = formatted.get("payment_method") or "UNKNOWN"
+    formatted["customer_name"] = formatted.get("customer_name") or "Customer"
+    formatted["customer_email"] = formatted.get("customer_email") or ""
+
+    r_id = formatted.get("razorpay_payment_id") or formatted.get("action_taken")
+    if r_id and str(r_id).startswith("plink_"):
+        formatted["razorpay_payment_link_id"] = str(r_id)
+    return formatted
+
+
 # ── Recovery Cases ────────────────────────────────────────────────────────────
 
 async def db_get_recovery_cases(status: Optional[str] = None, merchant_id: Optional[str] = None) -> List[Dict]:
     try:
         sb = get_supabase()
-        q = sb.table("recovery_cases").select("*").order("created_at", desc=True)
+        q = sb.table("recovery_cases").select("*, transactions(*, customers(*))").order("created_at", desc=True)
 
         if status and status != "all":
             q = q.eq("status", status)
@@ -22,19 +45,41 @@ async def db_get_recovery_cases(status: Optional[str] = None, merchant_id: Optio
             q = q.eq("merchant_id", merchant_id)
 
         result = q.limit(100).execute()
-        return result.data if result.data is not None else []
+        raw = result.data if result.data is not None else []
+        return [_format_case_dict(c) for c in raw]
     except Exception as e:
-        print(f"[DB] get_recovery_cases failed: {e}")
-        return []
+        print(f"[DB] get_recovery_cases failed (retrying without join): {e}")
+        try:
+            sb = get_supabase()
+            q = sb.table("recovery_cases").select("*").order("created_at", desc=True)
+            if status and status != "all":
+                q = q.eq("status", status)
+            if merchant_id:
+                q = q.eq("merchant_id", merchant_id)
+            result = q.limit(100).execute()
+            raw = result.data if result.data is not None else []
+            return [_format_case_dict(c) for c in raw]
+        except Exception as inner_e:
+            print(f"[DB] get_recovery_cases fallback failed: {inner_e}")
+            return []
 
 
 async def db_get_recovery_case(case_id: str) -> Optional[Dict]:
     try:
         sb = get_supabase()
-        result = sb.table("recovery_cases").select("*").eq("id", case_id).single().execute()
-        return result.data
+        result = sb.table("recovery_cases").select("*, transactions(*, customers(*))").eq("id", case_id).single().execute()
+        if result.data:
+            return _format_case_dict(result.data)
+        return None
     except Exception as e:
-        print(f"[DB] get_recovery_case failed: {e}")
+        print(f"[DB] get_recovery_case failed (retrying without join): {e}")
+        try:
+            sb = get_supabase()
+            result = sb.table("recovery_cases").select("*").eq("id", case_id).single().execute()
+            if result.data:
+                return _format_case_dict(result.data)
+        except Exception as inner_e:
+            print(f"[DB] get_recovery_case fallback failed: {inner_e}")
         return None
 
 

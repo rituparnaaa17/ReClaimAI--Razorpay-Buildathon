@@ -88,7 +88,7 @@ async def list_payment_links(count: int = 20):
     client = get_razorpay_client()
     try:
         result = client.payment_link.all({"count": count})
-        items = result.get("items", [])
+        items = result.get("payment_links") or result.get("items") or []
         return [
             {
                 "id": lnk["id"],

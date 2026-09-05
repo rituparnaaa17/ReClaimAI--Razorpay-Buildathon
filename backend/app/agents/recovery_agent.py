@@ -78,6 +78,10 @@ async def run_recovery_agent(case: Dict[str, Any]) -> Dict[str, Any]:
         "ai_reasoning": state["ai_reasoning"],
         "guardrail_passed": state["guardrail_passed"],
     }
+    if state["case"].get("razorpay_payment_id"):
+        update_payload["razorpay_payment_id"] = state["case"]["razorpay_payment_id"]
+    if state["case"].get("action_taken"):
+        update_payload["action_taken"] = state["case"]["action_taken"]
     # Step 6: persist verified amount only when genuinely measured
     if state.get("verified_amount_rupees") is not None:
         update_payload["amount_recovered"] = float(state["verified_amount_rupees"])
@@ -111,11 +115,11 @@ async def _log_step(state: AgentState, step: str, decision: str, reason: str, co
 async def _node_detect(state: AgentState) -> AgentState:
     state["step"] = "DETECT"
     if state["case"].get("status") != "detected":
-        await RecoveryStateMachine.transition_case(state["case"]["id"], "detected", reason="Agent started", source="agent")
+        await RecoveryStateMachine.force_transition(state["case"]["id"], "detected", reason="Agent started", source="agent")
     await _log_step(
         state, "DETECT",
         "Payment failure event detected and queued for recovery",
-        f"Webhook received: {state['case'].get('failure_reason', 'UNKNOWN')} on payment {state['case'].get('razorpay_payment_id', 'N/A')}",
+        f"Webhook received: {state['case'].get('failure_reason') or 'UNKNOWN'} on payment {state['case'].get('razorpay_payment_id', 'N/A')}",
         0.99, "success"
     )
     return state
@@ -124,7 +128,7 @@ async def _node_detect(state: AgentState) -> AgentState:
 async def _node_diagnose(state: AgentState) -> AgentState:
     state["step"] = "DIAGNOSE"
     await RecoveryStateMachine.transition_case(state["case"]["id"], "analyzing", reason="Agent diagnosing", source="agent")
-    failure = state["case"].get("failure_reason", "UNKNOWN")
+    failure = (state["case"].get("failure_reason") or "UNKNOWN").upper()
     cause_map = {
         "UPI_TIMEOUT": "Temporary UPI network congestion caused the session to expire before payment confirmation.",
         "BANK_DECLINE": "The issuing bank rejected the transaction — likely due to risk scoring or daily limit breach.",
@@ -155,10 +159,10 @@ async def _node_predict(state: AgentState) -> AgentState:
     reasoning = ""
     if settings.gemini_api_key:
         try:
-            reasoning = await _gemini_quick_assessment(state["case"])
+            reasoning = await asyncio.wait_for(_gemini_quick_assessment(state["case"]), timeout=3.0)
             state["ai_reasoning"] = reasoning
         except Exception as e:
-            print(f"[Gemini] predict node failed: {e}")
+            print(f"[Gemini] predict node skipped: {e}")
 
     await _log_step(
         state, "PREDICT",
@@ -264,12 +268,17 @@ async def _node_execute(state: AgentState) -> AgentState:
         }
         result = state["razorpay_result"]
 
-    # ── Keep local state in sync but skip DB insert for link IDs ──
+    # ── Persist Razorpay link / payment ID to Supabase DB ──
     razorpay_id = result.get("razorpay_identifier")
     if razorpay_id and result.get("status") == "executed":
-        # plink_xxx = payment link; pay_xxx = direct payment
-        field = "razorpay_payment_link_id" if razorpay_id.startswith("plink_") else "razorpay_payment_id"
-        state["case"][field] = razorpay_id
+        if razorpay_id.startswith("plink_"):
+            state["case"]["razorpay_payment_link_id"] = razorpay_id
+        state["case"]["razorpay_payment_id"] = razorpay_id
+        state["case"]["action_taken"] = razorpay_id
+        await db_update_recovery_case(state["case"]["id"], {
+            "razorpay_payment_id": razorpay_id,
+            "action_taken": razorpay_id,
+        })
 
     await _log_step(
         state, "EXECUTE",

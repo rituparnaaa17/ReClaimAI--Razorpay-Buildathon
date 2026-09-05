@@ -123,6 +123,13 @@ async def _find_case_for_payment(payment: Dict[str, Any]) -> Optional[Dict]:
             result = sb.table("recovery_cases").select("*").eq("razorpay_payment_id", payment_id).limit(1).execute()
             if result.data:
                 return result.data[0]
+
+        # 3. Fallback to finding by razorpay_payment_link_id
+        link_id = payment.get("payment_link_id")
+        if link_id:
+            result = sb.table("recovery_cases").select("*").eq("razorpay_payment_link_id", link_id).limit(1).execute()
+            if result.data:
+                return result.data[0]
                 
     except Exception as e:
         logger.warning(f"[Webhook] _find_case_for_payment failed: {e}")
@@ -290,21 +297,28 @@ async def handle_payment_link_failed(link_entity: Dict[str, Any], event_id: str)
     """
     link_id = link_entity.get("id", "")
     
-    # Check notes for recovery_case_id
+    # Check notes for recovery_case_id or lookup by razorpay_payment_link_id
     case_id = link_entity.get("notes", {}).get("recovery_case_id")
-    if not case_id:
-        logger.info(f"[Webhook] payment_link failed: no case_id in notes for link {link_id} — ignoring")
-        return {"event": "payment_link.failed", "link_id": link_id, "status": "no_case"}
-        
+    case = None
     try:
         sb = get_supabase()
-        result = sb.table("recovery_cases").select("*").eq("id", case_id).limit(1).execute()
-        if not result.data:
-            return {"event": "payment_link.failed", "link_id": link_id, "status": "no_case"}
-        case = result.data[0]
+        if case_id:
+            res = sb.table("recovery_cases").select("*").eq("id", case_id).limit(1).execute()
+            if res.data:
+                case = res.data[0]
+        if not case and link_id:
+            res = sb.table("recovery_cases").select("*").eq("razorpay_payment_link_id", link_id).limit(1).execute()
+            if res.data:
+                case = res.data[0]
     except Exception as e:
-        logger.warning(f"[Webhook] Failed to lookup case {case_id}: {e}")
+        logger.warning(f"[Webhook] Failed to lookup case for link {link_id}: {e}")
         return {"event": "payment_link.failed", "link_id": link_id, "status": "error"}
+
+    if not case:
+        logger.info(f"[Webhook] payment_link failed: no case found for link {link_id} — ignoring")
+        return {"event": "payment_link.failed", "link_id": link_id, "status": "no_case"}
+
+    case_id = case["id"]
 
     terminal = {"recovered", "failed", "escalated", "no_action", "expired"}
     if case.get("status") in terminal:
