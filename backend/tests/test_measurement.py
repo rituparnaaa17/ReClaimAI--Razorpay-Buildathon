@@ -484,6 +484,10 @@ async def test_regression_agent_recovered_state_has_amount():
         patch.object(RecoveryStateMachine, "transition_case",
                      new_callable=AsyncMock, side_effect=spy),
     ):
+        m_client.return_value.payment_link.fetch.return_value = {
+            "status": "paid",
+            "payments": [{"status": "captured", "amount": razorpay_paise, "currency": "INR"}],
+        }
         m_client.return_value.payment.fetch.return_value = {
             "id": case["razorpay_payment_id"],
             "status": "captured",

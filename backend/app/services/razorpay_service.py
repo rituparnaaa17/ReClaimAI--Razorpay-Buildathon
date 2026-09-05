@@ -198,11 +198,11 @@ async def verify_payment_status(case: Dict[str, Any]) -> VerificationResult:
     timestamp = datetime.now(timezone.utc).isoformat()
     payment_link_id = case.get("razorpay_payment_link_id")
     payment_id = case.get("razorpay_payment_id")
-    client = get_razorpay_client()
 
     try:
         # 1. If we generated a payment link, check the link status and payment attempts
         if payment_link_id and payment_link_id.startswith("plink_"):
+            client = get_razorpay_client()
             plink = client.payment_link.fetch(payment_link_id)
             plink_status = plink.get("status")
             payments = plink.get("payments") or []
@@ -252,6 +252,7 @@ async def verify_payment_status(case: Dict[str, Any]) -> VerificationResult:
                 "timestamp": timestamp,
             }
 
+        client = get_razorpay_client()
         payment = client.payment.fetch(payment_id)
         razorpay_status = payment.get("status")
 

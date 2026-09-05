@@ -101,9 +101,11 @@ async def test_execute_recovery_payment_link(mock_case):
 
 @pytest.mark.asyncio
 async def test_execute_recovery_smart_retry(mock_case):
-    result = await execute_recovery("Smart Retry", mock_case)
-    assert result["status"] == "not_executable"
-    assert "cannot be retried via API" in result["error_description"]
+    with patch('app.services.razorpay_service.create_payment_link', new_callable=AsyncMock) as mock_link:
+        mock_link.return_value = {"success": True, "payment_link_id": "plink_retry_123"}
+        result = await execute_recovery("Smart Retry", mock_case)
+        assert result["status"] == "executed"
+        assert result["razorpay_identifier"] == "plink_retry_123"
 
 @pytest.mark.asyncio
 async def test_execute_recovery_wait(mock_case):

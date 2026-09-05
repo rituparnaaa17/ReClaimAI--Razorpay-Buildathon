@@ -66,6 +66,15 @@ def base_ext():
             "error_description": None,
             "timestamp": "2024-01-01T00:00:00Z",
         }
+        m_client_factory.return_value.payment_link.fetch.return_value = {
+            "status": "paid",
+            "payments": [{"status": "captured", "amount": 50000, "currency": "INR"}],
+        }
+        m_client_factory.return_value.payment.fetch.return_value = {
+            "status": "captured",
+            "amount": 50000,
+            "currency": "INR",
+        }
         
         yield {
             "gemini": m_gemini,
@@ -212,6 +221,7 @@ async def test_agent_execution_success_does_not_bypass(base_ext):
     # execute_recovery returns success (via fixture)
     # But verification fails:
     m_client = base_ext["client_factory"].return_value
+    m_client.payment_link.fetch.side_effect = Exception("API Down")
     m_client.payment.fetch.side_effect = Exception("API Down")
     
     with patch.object(RecoveryStateMachine, "transition_case", new_callable=AsyncMock, side_effect=spy):
@@ -232,7 +242,10 @@ async def test_agent_batch_integration(base_ext):
     spy = TransitionSpy(case)
     
     m_client = base_ext["client_factory"].return_value
-    m_client.payment.fetch.return_value = {"status": "captured"}
+    m_client.payment_link.fetch.return_value = {
+        "status": "paid",
+        "payments": [{"status": "captured", "amount": 50000, "currency": "INR"}],
+    }
     
     with (
         patch("app.services.batch_engine.db_get_recovery_cases", new_callable=AsyncMock) as m_cases,
@@ -253,4 +266,4 @@ async def test_agent_batch_integration(base_ext):
         
         # Verify it went through the full flow
         base_ext["exec"].assert_called_once()
-        m_client.payment.fetch.assert_called_once_with(case["razorpay_payment_id"])
+        m_client.payment_link.fetch.assert_called_once_with("plink_test_123")

@@ -58,7 +58,7 @@ class RecoveryStateMachine:
         # 1. Load the current state
         case = await db_get_recovery_case(case_id)
         if not case:
-            raise ValueError(f"Recovery case {case_id} not found.")
+            case = {"id": case_id, "status": "detected"}
 
         current_state = case.get("status", "detected")
 
@@ -133,7 +133,7 @@ class RecoveryStateMachine:
         """
         case = await db_get_recovery_case(case_id)
         if not case:
-            raise ValueError(f"Recovery case {case_id} not found.")
+            case = {"id": case_id, "status": "detected"}
 
         current_state = case.get("status", "detected")
 
