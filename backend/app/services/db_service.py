@@ -200,4 +200,98 @@ async def db_get_analytics_overview() -> Dict:
     except Exception as e:
         print(f"[DB] get_analytics_overview failed: {e}")
 
+    from app.services.mock_data import get_mock_analytics
     return get_mock_analytics()["overview"]
+
+
+async def db_get_analytics_charts() -> Dict:
+    """Generate dynamic chart series from active Supabase database records."""
+    from app.services.mock_data import get_mock_analytics
+    try:
+        sb = get_supabase()
+        res = sb.table("recovery_cases").select("*").execute()
+        cases = res.data or []
+
+        if not cases:
+            return get_mock_analytics()["charts"]
+
+        # 1. By failure reason
+        reasons_count: Dict[str, Dict[str, int]] = {}
+        for c in cases:
+            reason = c.get("failure_reason") or "UNKNOWN"
+            if reason not in reasons_count:
+                reasons_count[reason] = {"total": 0, "recovered": 0}
+            reasons_count[reason]["total"] += 1
+            if c.get("status") == "recovered":
+                reasons_count[reason]["recovered"] += 1
+
+        by_failure = [
+            {
+                "reason": r,
+                "total_cases": v["total"],
+                "recovered": v["recovered"],
+                "rate": round((v["recovered"] / v["total"] * 100) if v["total"] > 0 else 0, 1)
+            }
+            for r, v in reasons_count.items()
+        ]
+
+        # 2. By payment method
+        methods_count: Dict[str, Dict[str, int]] = {}
+        for c in cases:
+            m = c.get("payment_method") or "UNKNOWN"
+            if m not in methods_count:
+                methods_count[m] = {"total": 0, "recovered": 0}
+            methods_count[m]["total"] += 1
+            if c.get("status") == "recovered":
+                methods_count[m]["recovered"] += 1
+
+        by_method = [
+            {
+                "method": m,
+                "total_cases": v["total"],
+                "recovered": v["recovered"],
+                "rate": round((v["recovered"] / v["total"] * 100) if v["total"] > 0 else 0, 1)
+            }
+            for m, v in methods_count.items()
+        ]
+
+        # 3. Probability distribution
+        buckets = {"0-30%": 0, "30-60%": 0, "60-80%": 0, "80-100%": 0}
+        for c in cases:
+            prob = float(c.get("recovery_probability") or 0)
+            if prob < 0.3:
+                buckets["0-30%"] += 1
+            elif prob < 0.6:
+                buckets["30-60%"] += 1
+            elif prob < 0.8:
+                buckets["60-80%"] += 1
+            else:
+                buckets["80-100%"] += 1
+
+        prob_dist = [{"range": k, "count": v} for k, v in buckets.items()]
+
+        # 4. 14-day trend
+        trend_map: Dict[str, Dict[str, float]] = {}
+        for c in cases:
+            created = c.get("created_at") or ""
+            dt_str = created.split("T")[0] if "T" in created else "Today"
+            if dt_str not in trend_map:
+                trend_map[dt_str] = {"at_risk": 0.0, "recovered": 0.0}
+            trend_map[dt_str]["at_risk"] += float(c.get("amount_at_risk") or 0)
+            if c.get("status") == "recovered":
+                trend_map[dt_str]["recovered"] += float(c.get("amount_recovered") or c.get("amount_at_risk") or 0)
+
+        trend = [
+            {"date": d, "at_risk": round(v["at_risk"], 2), "recovered": round(v["recovered"], 2)}
+            for d, v in sorted(trend_map.items())[-14:]
+        ]
+
+        return {
+            "trend": trend or get_mock_analytics()["charts"]["trend"],
+            "by_failure_reason": by_failure or get_mock_analytics()["charts"]["by_failure_reason"],
+            "by_payment_method": by_method or get_mock_analytics()["charts"]["by_payment_method"],
+            "probability_distribution": prob_dist,
+        }
+    except Exception as e:
+        print(f"[DB] get_analytics_charts failed: {e}")
+        return get_mock_analytics()["charts"]

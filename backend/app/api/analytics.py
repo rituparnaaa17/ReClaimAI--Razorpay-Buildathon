@@ -1,6 +1,4 @@
-from fastapi import APIRouter
-from app.services.db_service import db_get_analytics_overview
-from app.services.mock_data import get_mock_analytics
+from app.services.db_service import db_get_analytics_overview, db_get_analytics_charts
 
 router = APIRouter()
 
@@ -11,9 +9,8 @@ async def get_analytics_overview():
 
 
 @router.get("/charts")
-def get_analytics_charts():
-    data = get_mock_analytics()
-    return data["charts"]
+async def get_analytics_charts():
+    return await db_get_analytics_charts()
 
 
 @router.get("/insight")
